@@ -45,7 +45,7 @@ uv run --locked --extra cu128 python -m surgenet_dino encode --config configs/di
 
 2026-09-19 本机 Windows / Python 3.12.13 / torch 2.10.0+cu128 / timm 1.0.24：
 **102 项测试通过**，Ruff 通过，DINOv2-Base、DINOv3-Base 的 RTX 5090 CUDA 随机权重 demo 通过。
-官方预训练权重和下游分类准确率本轮未验证。具体边界见项目说明。
+随后已下载并验证作者的 DINOv2-Base 手术预训练权重，CUDA 合成前向检查通过；下游分类准确率尚未验证。具体边界见项目说明。
 仓库已有真实 `uv.lock`；初始化优先使用现有锁文件，仅在缺失时生成。
 
 ## 来源

@@ -176,9 +176,24 @@ uv run --locked --extra cu128 python -m examples.feature_api --config configs/di
 - 实际运行 `demo.bat cu128 dinov2_vitb` 和 `demo.bat cu128 dinov3_vitb`：均输出 `[1,768]`，退出码 0，并显示暂停提示。
 - 三种 Small 模型的真实 timm 前向等价测试和八种模型注册检查通过；不代表八种架构均做了 CUDA/预训练权重验证。
 
-本轮未重新安装完整环境，未运行真实官方权重下载，未验证真实图片的官方权重特征质量、训练准确率、RTX 6000 Ada 或远程 GitHub Actions。
+上述清理阶段未重新安装完整环境，尚未运行真实官方权重下载；随后新增的权重验证见第 8 节。真实图片的官方权重特征质量、训练准确率、RTX 6000 Ada 和远程 GitHub Actions 仍未验证。
 批处理中的 init/pretrained 外部操作通过替代命令检查控制流程，不声称实际下载/安装已经执行。
 历史交付环境的 `90 passed, 11 skipped` 是旧记录，不能代表当前机器；当前结果也不等于模型识别准确率。
 
 下一步若要做阶段分类，需要先确定数据、类别和按手术划分的训练/验证集，再实现分类头训练与评价；时序识别还需要连续帧输入和时序模型。
 原始大规模预训练配方与许可说明见 [UPSTREAM_REFERENCES.md](UPSTREAM_REFERENCES.md)。
+
+## 8. DINOv2-Base 作者权重验证（2026-09-19）
+
+重构基线提交：`4033501`。随后实际执行 `scripts\pretrained.bat cu128 dinov2_vitb`，从作者的 [Hugging Face 仓库](https://huggingface.co/rlpddejong/SurgeNetXL_DINOv1-v3) 下载并加载手术预训练权重。
+
+- 文件：`DINOv2_ViTb14_size336_SurgeNetXL.pth`（343,942,415 字节）。
+- HF revision：`9b2c75b7d469850b750a715b90cb91d6319f7e30`。
+- 下载文件 SHA-256：`cd6e73e692074f1d58d2e4125998818121acc61748ff941849784616b03c2def`。
+- 缓存目录：`.cache/huggingface`，由 Git 忽略，不提交大型权重。
+- CUDA 前向通过，输出 `[1,768]`，退出码 0，主干参数无缺失。
+- 预训练附加键 `mask_token` 未用于当前 timm 前向，加载器将其记录为忽略项。
+- 本地完整报告：`outputs/dinov2_vitb/pretrained_smoke.json`（不提交 Git）。
+
+这次仍使用合成随机输入，只验证真实权重的加载与计算；尚未测量真实图片特征质量或分类准确率。
+`demo` 仍使用随机权重，不会因为缓存里已有权重而改变行为。真实图片应使用第 4 节的 `encode` 命令；已有缓存时可加 `--offline` 禁止联网。
