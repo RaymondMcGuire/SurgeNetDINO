@@ -1,0 +1,7 @@
+# Tests architecture/forward only. This is NOT a trained classifier.
+[model]
+name = "dinov2_vitb"
+weights = "none"
+num_classes = 0
+device = "cpu"
+seed = 0

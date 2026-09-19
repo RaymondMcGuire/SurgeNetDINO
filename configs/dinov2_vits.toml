@@ -1,0 +1,15 @@
+# One selected model only. Paths are relative to the project working directory.
+# Native spec: vit_small_patch14_dinov2; 336px; patch 14; features 384.
+# This is a downstream model-loading preset, NOT a self-supervised pretraining recipe.
+[model]
+name = "dinov2_vits"
+weights = "surgenet"
+num_classes = 0
+weights_scope = "backbone"
+device = "cuda"
+cache_dir = ".cache/huggingface"
+revision = "main"
+offline = false
+seed = 0
+# For a formal experiment, replace main with the resolved HF commit from the report.
+# Also set sha256 to that report's checkpoint_sha256 to pin the weight bytes.

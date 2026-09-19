@@ -1,0 +1,15 @@
+# Local environments, caches, private research data and model artifacts
+.venv/
+.cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+outputs/
+data/
+checkpoints/
+*.pth
+*.pt
+*.safetensors
+# Commit the REAL lock after first successful initialization.
+!uv.lock

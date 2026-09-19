@@ -1,82 +1,56 @@
-# 🧠 SurgeNetDINO: Towards Effective Surgical Representation Learning with DINO Models
+# SurgeNetDINO
 
-This repository contains the official code and pretrained model weights for the paper:
+基于上游 SurgeNetDINO 重构的模型加载与图像特征提取工程，使用 uv 管理环境。
+支持 DINOv1-S/B、DINOv2-S/B/L、DINOv3-S/B/L，共八种模型。
 
-**_“Towards Effective Surgical Representation Learning with DINO Models”_**  
-**(Accepted for Medical Imaging with Deep Learning (MIDL) 2026)**
+**当前输出主要是图像特征向量，还没有手术阶段分类训练器、视频时序网络或比赛提交器。**
+部署、代码结构、模型切换与验证结果见 [项目说明](docs/PROJECT_GUIDE.md)。
 
-**[Find the paper here!](https://openreview.net/pdf?id=6FoIDPKzRV)**
+## Windows 快速运行
 
-## ⚙️ Requirements
-- Python 3.9+
-- torch
-- timm
+在项目根目录执行（默认后端 `cu128`，默认模型 `dinov2_vitb`）：
 
-## 🐍 Installation example using Conda
+```bat
+.\scripts\init.bat cu128
+.\scripts\demo.bat cu128 dinov2_vitb
+.\scripts\pretrained.bat cu128 dinov2_vitb
+.\scripts\check.bat cu128
+```
+
+四个批处理无论成功还是失败，都会显示退出码并暂停，按任意键后退出。`0` 表示成功。
+CPU 机器把第一个参数改为 `cpu`；切换 v3 把第二个参数改为 `dinov3_vitb`。
+Linux 对应使用 `bash scripts/init.sh cu128` 等 `.sh` 脚本。
+
+## demo 究竟做什么
+
+| 入口 | 输入与权重 | 用途 |
+|---|---|---|
+| `demo` | 随机图像张量 + 随机权重 | 检查环境和网络能否前向计算 |
+| `pretrained` | 随机图像张量 + 作者预训练权重 | 检查权重下载、兼容性和前向计算 |
+| `encode` | 你的真实图片 + 预训练权重 | 保存图像特征，供后续分类等任务使用 |
+
+默认 demo 生成一张 `[1,3,336,336]` 的随机输入，运行所选 Base 模型，检查 `[1,768]` 输出的形状和数值是否正常。
+它不读取手术图片，不训练模型，也不会输出阶段名称或分类准确率。
+
+提取真实图片特征：
+
 ```bash
-# Create a new conda environment with Python 3.9
-conda create -n SurgeNetDINO python=3.9 -y
-
-# Activate the environment
-conda activate SurgeNetDINO
-
-# Install PyTorch and timm
-conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
-pip install timm
+uv run --locked --extra cu128 python -m surgenet_dino encode --config configs/dinov2_vitb.toml --image data/example.jpg --output outputs/example_features.pt
 ```
 
-## 💾 Loading models
-After installations, you can use `load_weights.py` to load the pretrained DINO models.
+768 维表示一张图片被编码成 768 个数，不代表 768 个类别。
+要预测手术阶段，还需要带标签的数据、经过训练的分类头和验证流程。
 
-## ⬇️ Download the model weights here
-Alternatively, you can download the model weights using the provided links below.
+## 当前验证
 
-| Model   | Variant | Download |
-|---------|---------|----------|
-| **DINOv1** | ViT-s | [Download](https://huggingface.co/rlpddejong/SurgeNetXL_DINOv1-v3/resolve/main/DINOv1_ViTs16_size224_SurgeNetXL.pth?download=true) |
-| **DINOv1** | ViT-b | [Download](https://huggingface.co/rlpddejong/SurgeNetXL_DINOv1-v3/resolve/main/DINOv1_ViTb16_size224_SurgeNetXL.pth?download=true) |
-| **DINOv2** | ViT-s | [Download](https://huggingface.co/rlpddejong/SurgeNetXL_DINOv1-v3/resolve/main/DINOv2_ViTs14_size336_SurgeNetXL.pth?download=true) |
-| **DINOv2** | ViT-b | [Download](https://huggingface.co/rlpddejong/SurgeNetXL_DINOv1-v3/resolve/main/DINOv2_ViTb14_size336_SurgeNetXL.pth?download=true) |
-| **DINOv2** | ViT-l | [Download](https://huggingface.co/rlpddejong/SurgeNetXL_DINOv1-v3/resolve/main/DINOv2_ViTl14_size336_SurgeNetXL.pth?download=true) |
-| **DINOv3** | ViT-s | [Download](https://huggingface.co/rlpddejong/SurgeNetXL_DINOv1-v3/resolve/main/DINOv3_ViTs16_size336_SurgeNetXL.pth?download=true) |
-| **DINOv3** | ViT-b | [Download](https://huggingface.co/rlpddejong/SurgeNetXL_DINOv1-v3/resolve/main/DINOv3_ViTb16_size336_SurgeNetXL.pth?download=true) |
-| **DINOv3** | ViT-l | [Download](https://huggingface.co/rlpddejong/SurgeNetXL_DINOv1-v3/resolve/main/DINOv3_ViTl16_size336_SurgeNetXL.pth?download=true) |
+2026-09-19 本机 Windows / Python 3.12.13 / torch 2.10.0+cu128 / timm 1.0.24：
+**102 项测试通过**，Ruff 通过，DINOv2-Base、DINOv3-Base 的 RTX 5090 CUDA 随机权重 demo 通过。
+官方预训练权重和下游分类准确率本轮未验证。具体边界见项目说明。
+仓库已有真实 `uv.lock`；初始化优先使用现有锁文件，仅在缺失时生成。
 
-## 📄 Pretraining configurations
-The pretraining configurations can be found in ``dinov1_configs``, ``dinov2_configs``, and ``dinov3_configs``. Note that for ``dinov1``, we provide a `.sh` file instead of a configuration file following the original implementation. For further pretraining instructions, please refer to the original implementations of DINO: [DINOv1](https://github.com/facebookresearch/dino), [DINOv2](https://github.com/facebookresearch/dinov2), and [DINOv3](https://github.com/facebookresearch/dinov3).
+## 来源
 
-## 📚 Citation
-If you use these models or the dataset in your work, please cite our paper:
-```bibtex
-@inproceedings{
-  jong2026towards,
-  title={Towards Effective Surgical Representation Learning with {DINO} Models},
-  author={Ronald L.P.D. de Jong and Yiping Li and Tim J. M. Jaspers and Romy C. van Jaarsveld and Gino M. Kuiper and Franco Badaloni and Richard van Hillegersberg and Jelle P. Ruurda and Fons van der Sommen and Josien P.W. Pluim and Marcel Breeuwer},
-  booktitle={Medical Imaging with Deep Learning},
-  year={2026},
-  url={https://openreview.net/forum?id=6FoIDPKzRV}
-}
-```
-
-## 📬 Contact
-
-For questions or issues regarding this repository, please contact the corresponding author:
-
-**Ronald L.P.D. de Jong**  
-Email: r.l.p.d.d.jong@tue.nl  
-
-## ⚖️ License
-- Code: MIT — see LICENSE (permissive; commercial use permitted).
-- Pretrained model weights: CC-BY-NC-SA — non-commercial share-alike. The weights and any derivative models that include these weights are NOT cleared for commercial use. See LICENSE_MODELS for details and the precise license text.
-
-## 🙏 Acknowledgements
-
-We would like to thank the authors and maintainers of SurgeNetXL and the original DINO repositories for making their work publicly available:
-
-- [SurgeNetXL](https://github.com/TimJaspers0801/SurgeNet)
-- [DINOv1](https://github.com/facebookresearch/dino)  
-- [DINOv2](https://github.com/facebookresearch/dinov2)  
-- [DINOv3](https://github.com/facebookresearch/dinov3)
-
-Their open-source contributions provided the foundation for our work on surgical representation learning.
-
+上游：[rlpddejong/SurgeNetDINO](https://github.com/rlpddejong/SurgeNetDINO)。
+本工程是重构版本，不是作者的官方新版本。
+代码与模型权重分别遵循 [LICENSE.txt](LICENSE.txt) 和 [LICENSE_MODELS.txt](LICENSE_MODELS.txt)。
+论文归属与预训练配方链接保留在 [上游资料](docs/UPSTREAM_REFERENCES.md)。
