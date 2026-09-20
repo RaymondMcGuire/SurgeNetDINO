@@ -1,0 +1,12 @@
+# Head-only options. Pass with --head-config, NOT --config.
+[training]
+epochs = 20
+head_batch_size = 64
+learning_rate = 0.0003
+weight_decay = 0.05
+label_smoothing = 0.05
+dropout = 0.1
+evals_per_epoch = 4
+patience = 8
+min_delta = 0.0001
+min_epochs = 1.0

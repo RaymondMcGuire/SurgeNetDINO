@@ -5,7 +5,6 @@ import hashlib
 import importlib.metadata
 import io
 import json
-import math
 import platform
 import random
 import re
@@ -21,7 +20,9 @@ from PIL import Image
 from torch import nn
 
 from .config import ModelConfig
-from .gpu import GPUControl, PRESETS, Resources, gpu_identity, query_gpu
+from .gpu import CPUControl, GPUControl, PRESETS, Resources, gpu_identity, query_gpu
+from .head_options import resolve_options
+from .head import head_from_checkpoint
 from .model import build_model, set_trainable
 from .provenance import feature_identity
 from .registry import get_spec
@@ -69,7 +70,7 @@ def read_manifest(path: Path, inspect_images: bool = True) -> dict:
                     or not re.fullmatch(rf"{video}_\d{{6}}", name or "")):
                 raise ValueError(f"Invalid image filename: {name!r}")
             filename = name + ".png"
-            if filename in names or label not in LABELS or None in row:
+            if filename in names or label not in LABELS:
                 raise ValueError(f"Duplicate filename or invalid phase: {row}")
             names.add(filename)
             frame = int(row["frame_index"])
@@ -171,8 +172,14 @@ def state_digest(model) -> str:
 
 
 def environment(device, identity) -> dict:
-    return {"hardware": gpu_identity(device), "feature_identity": identity,
-            "torch": str(torch.__version__), "timm": importlib.metadata.version("timm"),
+    try:
+        timm_version = importlib.metadata.version("timm")
+    except importlib.metadata.PackageNotFoundError:
+        timm_version = None  # cached-head CPU tests need no encoder construction
+    hardware = gpu_identity(device) if device.type == "cuda" else {
+        "device": "cpu", "name": platform.processor() or platform.machine()}
+    return {"hardware": hardware, "feature_identity": identity,
+            "torch": str(torch.__version__), "timm": timm_version,
             "torchvision": importlib.metadata.version("torchvision"), "cuda": torch.version.cuda,
             "python": platform.python_version(), "platform": platform.platform(),
             "precision": "float32", "frozen": True, "num_workers": 0,
@@ -288,7 +295,9 @@ def head_step(head, optimizer, x, y, guard):
     with guard.batch(len(x)):
         optimizer.zero_grad(set_to_none=True)
         logits = head(x.to(guard.device))
-        loss = nn.functional.cross_entropy(logits, y.to(guard.device))
+        targets = y.to(guard.device)
+        loss = (head.training_loss(logits, targets) if hasattr(head, "training_loss")
+                else nn.functional.cross_entropy(logits, targets))
         if not torch.isfinite(loss).item():
             raise RuntimeError("Non-finite head loss")
         loss.backward()
@@ -326,16 +335,27 @@ def classification_metrics(logits, targets, records=None):
                           "recall": tp / max(1, support), "f1": 2 * tp / max(1, support + positive)})
     result = {"accuracy": (predicted == targets).float().mean().item(),
               "macro_f1": statistics.mean(r["f1"] for r in per_class),
-              "confusion": confusion.tolist(), "per_class": per_class, "labels": LABELS}
+              "confusion": confusion.tolist(), "per_class": per_class, "labels": LABELS,
+              "macro_f1_present": statistics.mean(r["f1"] for r in per_class if r["support"]),
+              "balanced_accuracy_present": statistics.mean(r["recall"] for r in per_class if r["support"])}
     if records:
         result["per_video"] = {}
         for video in sorted({r["video_id"] for r in records}):
             indices = [i for i, r in enumerate(records) if r["video_id"] == video]
-            result["per_video"][video] = classification_metrics(logits[indices], targets[indices])
+            from .diagnostics import probability_metrics
+            metrics = classification_metrics(logits[indices], targets[indices])
+            metrics.update(probability_metrics(logits[indices], targets[indices]))
+            result["per_video"][video] = metrics
+        result["video_mean_accuracy"] = statistics.mean(m["accuracy"] for m in result["per_video"].values())
+        result["video_mean_macro_f1_present"] = statistics.mean(
+            m["macro_f1_present"] for m in result["per_video"].values())
     return result
 
 
 def train_head(args, config, output):
+    from .head_training import fit
+
+    options = resolve_options(args)
     cache = load_features(args.features)
     contract = cache["feature_identity"]["contract"]
     if config.name != contract["model"] or (
@@ -345,86 +365,25 @@ def train_head(args, config, output):
     split = cache["split"]
     train_rows, val_rows = split["train"]["records"], split["validation"]["records"]
     count = len(train_rows)
-    x, y = cache["features"][:count], cache["targets"][:count]
-    vx, vy = cache["features"][count:], cache["targets"][count:]
     write_json(output / "split.json", split["definition"])
     provenance = {"path": split["path"], "sha256": split["sha256"],
                   "train_identity": split["train"]["identity"],
                   "validation_identity": split["validation"]["identity"]}
     device = resolve_device(config.device)
     resources = resources_for(args)
-    batch = args.head_batch_size
-    with GPUControl(device, resources, output / "gpu.csv") as guard:
+    if device.type == "cpu" and args.profiles:
+        raise ValueError("CPU head runs do not use CUDA calibration; omit --profiles")
+    control = GPUControl if device.type == "cuda" else CPUControl
+    with control(device, resources, output / "gpu.csv") as guard:
         env = environment(device, cache["feature_identity"])
-        profile_batch(args, env, resources)
-        head = new_head(x.shape[1], device, config.seed)
-        optimizer = torch.optim.AdamW(head.parameters(), lr=args.learning_rate,
-                                     weight_decay=args.weight_decay)
-        generator = torch.Generator().manual_seed(config.seed)
-        full_before = state_digest(head)
-        start = guard.mark()
-        history, best_loss, best_state, best_epoch = [], float("inf"), None, None
-        fields = ["epoch", "train_loss", "train_accuracy", "validation_loss",
-                  "validation_accuracy", "validation_macro_f1"]
-        with (output / "learning_curve.csv").open("x", newline="", encoding="utf-8") as stream:
-            writer = csv.DictWriter(stream, fieldnames=fields)
-            writer.writeheader()
-            for epoch in range(args.epochs + 1):
-                if epoch:
-                    head.train()
-                    order = torch.randperm(len(x), generator=generator)
-                    for indices in order.split(batch):
-                        head_step(head, optimizer, x[indices], y[indices], guard)
-                logits, loss = evaluate(head, x, y, guard, batch)
-                val_logits, val_loss = evaluate(head, vx, vy, guard, batch)
-                val_metrics = classification_metrics(val_logits, vy)
-                row = {"epoch": epoch, "train_loss": loss,
-                       "train_accuracy": (logits.argmax(1) == y).float().mean().item(),
-                       "validation_loss": val_loss, "validation_accuracy": val_metrics["accuracy"],
-                       "validation_macro_f1": val_metrics["macro_f1"]}
-                history.append(row)
-                writer.writerow(row)
-                stream.flush()
-                if epoch and val_loss < best_loss:
-                    best_loss, best_epoch = val_loss, epoch
-                    best_state = {k: v.detach().cpu().clone() for k, v in head.state_dict().items()}
-                    best_logits = val_logits.clone()
-                print(f"Epoch {epoch}/{args.epochs}: train loss={loss:.5f}, "
-                      f"accuracy={row['train_accuracy']:.4f}; validation loss={val_loss:.5f}, "
-                      f"accuracy={val_metrics['accuracy']:.4f}, macro-F1={val_metrics['macro_f1']:.4f}",
-                      flush=True)
-        payload = {"labels": LABELS, "feature_identity": cache["feature_identity"],
-                   "model_config": cache["model_config"], "split": provenance,
-                   "feature_cache_sha256": file_sha256(args.features), "environment": env,
-                   "selection": "minimum validation cross-entropy over trained epochs"}
-        save_tensor(output / "head_last.pt", {**payload, "epoch": args.epochs,
-                    "state_dict": {k: v.detach().cpu().clone() for k, v in head.state_dict().items()}})
-        save_tensor(output / "head_best.pt", {**payload, "epoch": best_epoch, "state_dict": best_state})
-        changed = full_before != state_digest(head)
-        restored = torch.load(output / "head_best.pt", map_location="cpu", weights_only=True)
-        head.load_state_dict(restored["state_dict"])
-        reloaded, _ = evaluate(head, vx, vy, guard, batch)
-        torch.testing.assert_close(best_logits, reloaded, rtol=0, atol=0)
-        best_train, _ = evaluate(head, x, y, guard, batch)
-        result = {"status": "passed", "scope": "video-disjoint training and internal validation",
-                  "history": history, "best_epoch": best_epoch, "selection": payload["selection"],
-                  "train": classification_metrics(best_train, y, train_rows),
-                  "validation": classification_metrics(reloaded, vy, val_rows),
-                  "split": provenance, "parameters_changed": changed,
-                  "train_loss_decreased": history[-1]["train_loss"] < history[0]["train_loss"],
-                  "labels": LABELS, "reload_identical": True, "gpu": guard.summary(start),
-                  "head_batch_size": batch, "head_parameters": sum(p.numel() for p in head.parameters())}
-        write_json(output / "result.json", result)
-        with (output / "validation_predictions.csv").open("x", newline="", encoding="utf-8") as stream:
-            writer = csv.DictWriter(stream, fieldnames=["video_id", "filename", "phase_id",
-                                                        "predicted_phase_id", "top_score"])
-            writer.writeheader()
-            probabilities, predictions = reloaded.softmax(1).max(1)
-            for record, pred, score in zip(val_rows, predictions.tolist(), probabilities.tolist()):
-                writer.writerow({"video_id": record["video_id"], "filename": record["filename"],
-                                 "phase_id": record["phase_id"], "predicted_phase_id": LABELS[pred],
-                                 "top_score": score})
-    return result
+        if device.type == "cuda":
+            profile_batch(args, env, resources)
+        metadata = {"feature_identity": cache["feature_identity"],
+                    "model_config": cache["model_config"], "split": provenance,
+                    "feature_cache_sha256": file_sha256(args.features), "environment": env}
+        return fit(cache["features"][:count], cache["targets"][:count],
+                   cache["features"][count:], cache["targets"][count:],
+                   train_rows, val_rows, options, config.seed, guard, output, metadata)
 
 
 def predict_head(args, config, output):
@@ -435,9 +394,8 @@ def predict_head(args, config, output):
     with GPUControl(device, resources_for(args), output / "gpu.csv") as guard:
         model, identity = encoder(config, device)
         assert_identity(identity, checkpoint["feature_identity"], "Head encoder")
-        head = new_head(get_spec(config.name).feature_dim, device, config.seed)
-        head.load_state_dict(checkpoint["state_dict"])
-        head.eval()
+        head = head_from_checkpoint(checkpoint, get_spec(config.name).feature_dim,
+                                    len(LABELS), device)
         predictions = []
         for path in args.image:
             features = extract_batch(model, [{"image_path": str(path)}],
@@ -637,18 +595,18 @@ def run(args, config):
     started = time.perf_counter()
     if config.weights == "none" or config.num_classes != 0:
         raise ValueError("Frozen training requires pretrained features with num_classes=0")
-    for name in ("batch_size", "head_batch_size", "epochs"):
-        value = getattr(args, name, None)
-        if value is not None and value < 1:
-            raise ValueError(f"{name} must be positive")
-    for name in ("learning_rate", "weight_decay"):
-        value = getattr(args, name, None)
-        if value is not None and (not math.isfinite(value) or value < 0
-                                  or (name == "learning_rate" and value == 0)):
-            raise ValueError(f"Invalid {name}")
+    if args.batch_size is not None and args.batch_size < 1:
+        raise ValueError("batch_size must be positive")
     torch.set_num_threads(resources_for(args).cpu_threads)
-    if resolve_device(config.device).type != "cuda":
-        raise ValueError("Training requires a CUDA device; no CPU fallback")
+    head_commands = {"train-head", "crossval-head"}
+    if args.command in head_commands:
+        resolve_options(args)  # reject invalid settings before creating outputs
+    if args.command != "audit-features":
+        device = resolve_device(config.device)
+        if device.type != "cuda" and args.command not in head_commands:
+            raise ValueError("Image extraction/prediction/calibration requires CUDA; no CPU fallback")
+        if device.type == "cpu" and args.profiles:
+            raise ValueError("CPU head runs do not use CUDA calibration; omit --profiles")
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=False)
     write_json(output / "run.json", {"command": args.command, "model": asdict(config),
@@ -662,6 +620,9 @@ def run(args, config):
             result = cache_features(args, config, output)
         elif args.command == "train-head":
             result = train_head(args, config, output)
+        elif args.command in {"crossval-head", "audit-features"}:
+            from .experiments import run_experiment
+            result = run_experiment(args, config, output)
         else:
             result = predict_head(args, config, output)
         write_json(output / "timing.json", {"command_seconds": time.perf_counter() - started,

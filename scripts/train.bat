@@ -49,6 +49,6 @@ echo Output: "%RUN_DIR%"
 echo [1/2] Validate the split and cache frozen features for training and validation.
 uv run --locked --extra cu128 python -m surgenet_dino cache-features --split "%SPLIT_JSON%" --output-dir "%RUN_DIR%\cache" --gpu-profile "%PROFILE%" --profiles "%PROFILES_JSON%"
 if errorlevel 1 exit /b %errorlevel%
-echo [2/2] Train the classifier and evaluate held-out videos after every epoch.
+echo [2/2] Train a regularized linear head with sub-epoch validation and early stopping.
 uv run --locked --extra cu128 python -m surgenet_dino train-head --features "%RUN_DIR%\cache\features.pt" --output-dir "%RUN_DIR%\train" --gpu-profile "%PROFILE%" --profiles "%PROFILES_JSON%"
 exit /b %errorlevel%

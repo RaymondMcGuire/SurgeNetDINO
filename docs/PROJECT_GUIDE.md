@@ -1,3 +1,5 @@
+> 本文介绍基础架构，并保留标明日期的早期验证记录。当前训练设置、四折结果和验证边界见 [TRAINING.md](TRAINING.md)。
+
 # SurgeNetDINO 项目说明
 
 更新：2026-09-20；工程版本：0.3.0。
@@ -148,8 +150,11 @@ v2/v3 的 768 维特征含义不同。换编码器、权重或预处理后，需
 | `surgenet_dino/weights.py` | 下载、本地读取、哈希和权重兼容性校验 |
 | `surgenet_dino/runtime.py` | 设备检查与图片预处理 |
 | `surgenet_dino/provenance.py` | 特征空间来源标识 |
-| `surgenet_dino/cli.py` | 原有命令及 calibrate-gpu / cache-features / train-head / predict-head |
-| `surgenet_dino/training.py` | 分类数据、冻结缓存、校准流程、线性头训练与预测 |
+| `surgenet_dino/cli.py` | 模型检查、缓存、训练、预测、交叉验证与数据核验入口 |
+| `surgenet_dino/training.py` | 分类数据、冻结缓存、GPU 校准及训练/预测调度 |
+| `surgenet_dino/head_options.py`、`head.py`、`head_training.py` | 固定组合参数、分类头、旧模型兼容、早停与训练循环 |
+| `surgenet_dino/experiments.py` | 按视频交叉验证、独立划分清单和合并验证指标 |
+| `surgenet_dino/diagnostics.py` | 类别覆盖、逐帧预测与置信度诊断 |
 | `surgenet_dino/gpu.py` | 单卡显存预算、批间节奏、温度与 GPU 采样 |
 | `load_models.py` | 保留旧文件入口，转调新 CLI |
 | `examples/feature_api.py` | 直接使用 Python API 提取单图特征的示例 |
@@ -164,7 +169,7 @@ Python API 通过 `build_model(config)` 返回 CPU 模型和加载报告；调�
 uv run --locked --extra cu128 python -m examples.feature_api --config configs/dinov3_vitb.toml --image data/example.jpg
 ```
 
-## 7. 本轮清理与验证
+## 7. 早期清理与验证记录（2026-09-19）
 
 清理了九个一次性交付文件：源码哈希清单及其验包脚本、机器可读的旧交付状态、重复测试报告，以及五份旧环境验证产物。
 来源归档哈希和论文归属保留在 [UPSTREAM_REFERENCES.md](UPSTREAM_REFERENCES.md)。
@@ -180,7 +185,7 @@ uv run --locked --extra cu128 python -m examples.feature_api --config configs/di
 - 实际运行 `demo.bat cu128 dinov2_vitb` 和 `demo.bat cu128 dinov3_vitb`：均输出 `[1,768]`，退出码 0，并显示暂停提示。
 - 三种 Small 模型的真实 timm 前向等价测试和八种模型注册检查通过；不代表八种架构均做了 CUDA/预训练权重验证。
 
-上述清理阶段未重新安装完整环境，尚未运行真实官方权重下载；随后新增的权重验证见第 8 节。真实图片的官方权重特征质量、训练准确率、RTX 6000 Ada 和远程 GitHub Actions 仍未验证。
+上述早期检查未运行真实官方权重下载；随后权重验证见第 8 节，真实数据训练与四折结果见 [TRAINING.md](TRAINING.md)。RTX 6000 Ada 和远程 GitHub Actions 尚未验证。
 批处理中的 init/pretrained 外部操作通过替代命令检查控制流程，不声称实际下载/安装已经执行。
 历史交付环境的 `90 passed, 11 skipped` 是旧记录，不能代表当前机器；当前结果也不等于模型识别准确率。
 

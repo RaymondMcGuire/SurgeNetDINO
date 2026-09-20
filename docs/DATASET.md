@@ -118,3 +118,11 @@ python prepare_labeled.py split --dataset "H:\dataset\JSCAS_preprocessed\labeled
 
 [数据报告](H:/dataset/JSCAS_preprocessed/labeled_1fps_v1/README.md) ·
 [划分记录](H:/dataset/JSCAS_experiments/splits/video_holdout_9_3_v1/split.json)
+
+## 固定方案四折验证
+
+当前 crossval-head 会合并原 9/3 缓存的全部 12 个已标注视频，按完整视频生成四折，
+每折 9 个训练、3 个验证。各折 train.csv、validation.csv、split.json 与总 folds.json
+保存到独立的新划分目录，不修改这里记录的原始数据版本或原 9/3 清单。
+每张有效图片恰好作为验证样本一次；分组 seed=42，只依据标签数量平衡，不参考模型预测。
+具体名单、入口和开发验证的解释见 [TRAINING.md](TRAINING.md)。

@@ -197,3 +197,38 @@ class GPUControl:
         if self.thread:
             self.thread.join(timeout=6)
         self.stream.close()
+
+
+class CPUControl:
+    """Explicit cached-head CPU execution, not a silent CUDA fallback or GPU benchmark."""
+
+    def __init__(self, device, resources, log=None):
+        if device.type != "cpu":
+            raise ValueError("CPUControl requires CPU")
+        self.device, self.resources = device, resources
+        self.count, self.batch_count = 0, 0
+
+    def __enter__(self):
+        torch.set_num_threads(self.resources.cpu_threads)
+        self.started = time.perf_counter()
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    @contextmanager
+    def batch(self, count):
+        yield
+        self.count += count
+        self.batch_count += 1
+
+    def mark(self):
+        self.started = time.perf_counter()
+        self.count, self.batch_count = 0, 0
+        return self.started
+
+    def summary(self, since=0):
+        elapsed = time.perf_counter() - max(self.started, since)
+        return {"device": "cpu", "gpu_used": False, "seconds": elapsed,
+                "samples_processed_including_evaluation": self.count,
+                "batches": self.batch_count, "cpu_threads": self.resources.cpu_threads}

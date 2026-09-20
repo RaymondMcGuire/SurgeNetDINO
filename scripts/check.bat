@@ -30,7 +30,7 @@ if not exist uv.lock (
 )
 uv run --locked --extra "%BACKEND%" python -m surgenet_dino doctor
 if errorlevel 1 exit /b 1
-uv run --locked --extra "%BACKEND%" ruff check surgenet_dino tests examples load_models.py
+uv run --locked --extra "%BACKEND%" ruff check surgenet_dino scripts tests examples load_models.py
 if errorlevel 1 exit /b 1
 uv run --locked --extra "%BACKEND%" python -m pytest -q
 exit /b %errorlevel%

@@ -1,105 +1,113 @@
-# 冻结 DINOv2：按视频训练和验证
+# 当前组合方案与四折交叉验证
 
-在项目根目录运行，或直接双击 scripts/train.bat：
+## 固定训练规则
 
-```powershell
-.\scripts\train.bat
-# 可选负载档位
-.\scripts\train.bat medium
-.\scripts\train.bat high
-```
+冻结 SurgeNet DINOv2-Base，不修改图像处理或 768 维特征。头为 Dropout(0.1) → Linear(768,13)。
+AdamW 学习率 0.0003、weight decay 0.05（bias 不衰减）、标签平滑 0.05、batch 64、seed 42。
+配置见 configs/head_regularized.toml；覆盖优先级为显式 CLI > --head-config TOML > 相同的程序默认值。
+不再有配方注册表或 --recipe / --candidates。当前只按验证交叉熵选择最佳模型。
 
-默认 low。脚本先检查数据并缓存冻结特征，再训练线性分类头；成功或失败都显示退出码并暂停。
-默认读取 `H:\dataset\JSCAS_experiments\splits\video_holdout_9_3_v1\split.json`：
+训练上限 20 轮，每轮验证 4 次；连续 8 次未改善至少 0.0001 后早停，至少训练 1 轮。
+停止时恢复最佳模型；严格更低的验证损失都可更新最佳模型，min_delta 只影响停止计数。
+第 0 轮仅记录未训练基线，不参与最佳模型选择。
+验证使用普通、无平滑、无类别加权的交叉熵，并关闭 Dropout；验证图片不参加梯度更新。
 
-| 分组 | 视频 | 图片数 |
-|---|---|---:|
-| 训练 | 01,03,05,06,09,12,13,14,16 | 55,779 |
-| 验证 | 04,08,10 | 18,651 |
+原组合实验第 6 轮停止，是早停触发，并非将训练上限设成了 6。当前不增加训练上限。
 
-两组视频完全分离。验证图片只提取特征、计算指标，不参与梯度更新。
-无公开标签的官方测试视频不参与本次实验；内部验证指标也不等于最终比赛成绩。
-
-## 输入、训练和结果
-
-入口必须是版本化 split.json，引用同目录的七列 train.csv / validation.csv 和预处理目录的 dataset.json。
-程序检查清单哈希、类别覆盖、视频和图片内容互斥、两组并集等于预处理允许清单，
-并逐张检查图片可读、哈希一致、没有整图 RGB 最大值 <= 1 的黑帧。不会扫描图片目录补入样本。
-读取缓存训练时也重新核对数据来源，因此启动阶段需要磁盘读取时间。
-数据约定与重新划分方法见 [DATASET.md](DATASET.md)。
-
-模型配置为 configs/frozen_dinov2.toml：固定已验证的 SurgeNet DINOv2-Base 权重、336 输入、float32、GPU 0、seed 42。
-DINO 全部冻结，先生成按训练行、验证行依次排列的 768 维特征缓存，再释放编码器。
-分类头为 Linear(768,13)，仅训练集打乱；默认 20 轮、batch 64、AdamW、学习率 0.001、权重衰减 0.0001、普通交叉熵。
-第 0 轮记录未训练基线；最佳模型从第 1～20 轮按验证交叉熵最低选取。
-
-每次新建 `H:\dataset\JSCAS_experiments\frozen_dinov2\<时间戳>`，拒绝覆盖已有目录：
-
-- cache/：features.pt、来源与划分快照、GPU 监测、运行参数和结果。
-- train/head_best.pt、head_last.pt：验证损失最佳及最后一轮分类头。
-- train/learning_curve.csv：每轮训练/验证损失、准确率、验证 macro-F1。
-- train/result.json：最佳模型的总体、逐类、逐视频指标及混淆矩阵，保存重载一致性检查和 GPU 统计。
-- train/validation_predictions.csv：最佳模型在验证集上的逐帧预测。top_score 为未经校准的 softmax 分数。
-
-混淆矩阵行为真实类别、列为预测类别；macro-F1 固定对 13 类取平均，单视频缺少的类别记 0。
-脚本没有断点续训；失败记录留在原目录，重跑请使用新目录。无需每次重新校准 GPU。
-
-## 自定义入口
-
-BAT 参数依次为负载档位、新实验目录、split.json、profiles.json，后三项可省略：
+## 日常运行
 
 ```powershell
-.\scripts\train.bat low "H:\dataset\JSCAS_experiments\frozen_dinov2\run02" "H:\dataset\JSCAS_experiments\splits\video_holdout_9_3_v1\split.json" "H:\dataset\JSCAS_experiments\phase1_video01\20260920_phase1\calibration\profiles.json"
+# 提取特征，再按原 9/3 划分训练
+.\scripts\train.bat low
+# 直接复用已有完整特征缓存
+.\scripts\retrain_head.bat
+# 全部 12 个已标注视频，四折训练并出图
+.\scripts\crossval.bat
 ```
 
-已有本版本特征缓存时可直接重新训练分类头，并用不同的新输出目录记录实验：
+train.bat 参数依次为 PROFILE、NEW_RUN_DIR、SPLIT_JSON、PROFILES_JSON。
+retrain_head.bat 参数为 FEATURES_PT、PROFILE、NEW_RUN_DIR。
+crossval.bat 参数为 FEATURES_PT、PROFILE、NEW_RUN_DIR、NEW_SPLIT_DIR、PROFILES_JSON；均可省略。
+默认特征为 `H:\dataset\JSCAS_experiments\frozen_dinov2\20260920_122914_522\cache\features.pt`。
+默认 low，支持 medium/high；GPU 校准文件仍复用历史 phase1_video01 目录的 profiles.json。
+显存预算和批间休息不是精确利用率目标；75°C、遥测异常、非有限数值、显存不足会停止计算。
+
+四折新实验默认保存到 `H:\dataset\JSCAS_experiments\frozen_dinov2\crossval_regularized_<时间戳>`，
+划分另存到 `H:\dataset\JSCAS_experiments\splits` 下的同名新目录。
+BAT 成功或失败都会暂停，输出退出码。读取缓存时仍完整检查来源图片和清单，因此启动核验有读盘耗时。
+只核验缓存一次，各折共用核验结果，不重新抽帧、复制图片或运行 DINO。
+
+## 四折约定
+
+使用缓存中的原训练与验证部分，共 12 个视频、74,430 张有效图片。原 9/3 划分保持原样，官方无公开标签的视频不参加。
+固定 seed=42，按完整视频的类别计数平衡分组，不使用模型预测选组：
+
+| 折 | 验证视频 | 训练图片 | 验证图片 |
+|---|---|---:|---:|
+| 1 | 01,10,14 | 55,507 | 18,923 |
+| 2 | 04,06,13 | 56,374 | 18,056 |
+| 3 | 05,12,16 | 55,251 | 19,179 |
+| 4 | 03,08,09 | 56,158 | 18,272 |
+
+各折其余 9 个视频训练，两组均覆盖全部 13 类。每个视频验证一次，所有帧的验证预测完整覆盖且不重复。
+每折重新初始化头、优化器和随机种子，依次运行，不继承上一折权重。每折独立早停，曲线在实际停止处结束。
+新划分目录包含 folds.json 和各折 train.csv、validation.csv、split.json；沿用 DATASET.md 的七列清单格式、来源身份和哈希核验。
+
+任一折失败立即停止，留下 failure.json，不执行后续折，不发布成功汇总；不自动重试或调参。
+当前无断点续训。重新执行使用新目录，不覆盖失败记录或历史实验。
+
+## 输出与解读
+
+每折保留 head_best.pt、head_last.pt、learning_curve.csv、result.json、training_options.json、
+逐帧最佳与末轮验证预测、GPU 记录及数据诊断。原始 Linear 和已实际训练的无特征归一化 v2 分类头仍可预测。
+已移除归一化的旧实验模型会明确报错，不会静默跳过变换。
+
+总目录保存：
+
+- fold_metrics.csv：各折准确率、macro-F1、NLL、ECE、最佳/停止轮次、更新数、是否达到上限。
+- video_metrics.csv：每个视频作为验证集时的指标。
+- validation_predictions.csv：各帧恰好一次的验证预测，含 fold 编号。
+- result.json：各折等权均值和样本标准差，以及依据合并预测重新计算的指标与混淆矩阵。
+- REPORT.md、plots：训练曲线、逐视频准确率、各类 F1、合并混淆矩阵；每折另有详细曲线。
+
+macro-F1 固定对 13 类等权平均；macro_f1_present 仅统计该视频有真实样本的类别，两者分开标明。
+折均值不等于合并样本指标，标准差也不是置信区间。
+**每折验证集参与早停和模型选择，所以这里是开发阶段交叉验证，不能称作无偏的最终测试。**
+不自动把某一折当作最佳部署模型，也不自动全量重训。到上限仍改善的折只在报告中标注，本轮不延长。
+
+## CLI 与绘图
 
 ```powershell
-uv run --locked --extra cu128 python -m surgenet_dino train-head --features "H:\dataset\JSCAS_experiments\frozen_dinov2\run02\cache\features.pt" --output-dir "H:\dataset\JSCAS_experiments\frozen_dinov2\head02" --gpu-profile low --epochs 20
-uv run --locked --extra cu128 python -m surgenet_dino predict-head --head "H:\dataset\JSCAS_experiments\frozen_dinov2\run02\train\head_best.pt" --image "H:\path\image.png" --output-dir "H:\dataset\JSCAS_experiments\frozen_dinov2\prediction02"
+uv run --locked --extra cu128 python -m surgenet_dino crossval-head --features "H:\dataset\JSCAS_experiments\frozen_dinov2\20260920_122914_522\cache\features.pt" --output-dir "H:\dataset\JSCAS_experiments\frozen_dinov2\cv_new" --split-output-dir "H:\dataset\JSCAS_experiments\splits\cv_new" --folds 4 --gpu-profile low
+uv run --isolated --no-project --with matplotlib==3.11.2 python -m scripts.plot_crossval "H:\dataset\JSCAS_experiments\frozen_dinov2\cv_new"
 ```
 
-四个 CLI 入口为 calibrate-gpu、cache-features --split、train-head --features、predict-head --head。
-各自 --help 列出设备、batch、显存预算、计算节奏、温度阈值等覆盖参数。
-旧单视频特征缓存不兼容新的划分契约，需要重新提取。
+BAT 自动执行第二步；直接 CLI 训练后须显式绘图。绘图使用独立环境，不修改训练依赖。plots 已存在时拒绝覆盖。
+单个训练结果仍使用 scripts/plot_training_result.py，包括历史对比目录中的单个结果。
+CPU 缓存训练可明确指定 --device cpu，此时不要提供 CUDA profiles。
+Linux：retrain_head.sh FEATURES_PT PROFILE NEW_RUN_DIR [cpu|cu128]；
+crossval.sh FEATURES_PT NEW_RUN_DIR NEW_SPLIT_DIR [PROFILE] [PROFILES_JSON] [cpu|cu128]。
 
-## 负载与历史校准
+预处理与数据版本约定见 [DATASET.md](DATASET.md)。历史单视频、9/3 对比的模型和图片均留在原 H 盘目录。
 
-保留原先实测校准配置，其历史路径含 phase1_video01，不代表程序仍使用单视频训练。
-当前 GPU 0 RTX 5090 的三个档位提取 batch 均为 8；预算/计算节奏分别为 low 20%/30%、medium 50%/60%、high 80%/80%。
-这些是显存上限与批间节奏，不保证实际利用率或显存达到该比例。历史提取约 61 张/秒，
-程序峰值已分配显存约 0.5 GiB；全量实验的磁盘速度与耗时需要本次运行测量。
-默认 75°C 停止；监测异常、显存不足和非有限数值会停止。不会修改系统功率、频率或风扇。
+## 已完成的四折实验（2026-09-20）
 
-换 GPU、模型、输入尺寸、精度或解冻编码器后，应重新校准。冻结提取的重新校准示例：
+结果与图表：[REPORT.md](H:/dataset/JSCAS_experiments/frozen_dinov2/crossval_regularized_20260920_212640/REPORT.md)。
+独立划分目录：`H:\dataset\JSCAS_experiments\splits\video_cv4_20260920_212640`。
 
-```powershell
-uv run --locked --extra cu128 python -m surgenet_dino calibrate-gpu --manifest "H:\dataset\JSCAS_experiments\splits\video_holdout_9_3_v1\train.csv" --output-dir "H:\dataset\JSCAS_experiments\calibration_new"
-```
+| 折 | 准确率 | macro-F1 | 最佳轮 | 停止轮 |
+|---|---:|---:|---:|---:|
+| 1 | 76.50% | 71.58% | 5.25 | 7.25 |
+| 2 | 78.69% | 72.52% | 5.25 | 7.25 |
+| 3 | 74.74% | 66.91% | 3.25 | 5.25 |
+| 4 | 76.95% | 71.03% | 4.50 | 6.50 |
 
-解冻训练不属于当前实现，需要新的训练和校准流程。
-历史单视频 4719 张的 99.81% 是训练集准确率，不是本次跨视频验证结果；历史实验产物保留以便追溯。
+各折准确率均值 76.72%，样本标准差 1.62 个百分点；macro-F1 均值 70.51%，样本标准差 2.48 个百分点。
+合并 74,430 张验证预测的准确率为 76.69%、macro-F1 为 70.97%、普通交叉熵为 0.7456、ECE 为 1.42%。
+已独立核对每张有效图片恰好验证一次、标签与来源一致、各折独立初始化以及模型保存重载一致。
+四折均提前停止，没有触及 20 轮上限；本轮不增加训练轮数。low 档 GPU 最高温度为 61°C。
+这些仍是用于早停和模型选择的开发阶段交叉验证结果。
 
-## 本次入口验证（2026-09-20）
-
-116 项自动测试与 Ruff 通过。完整 74,430 行划分通过读取与身份检查。
-实际运行新 BAT：从视频 01、04 各取 26 张真实图片，完成冻结特征、20 轮训练/验证、最佳模型保存重载一致性及单图预测，退出码 0。
-记录位于项目 outputs/training_smoke_20260920_102247；这些少量图片只验证程序流程，不作为正式效果评估。
-完整 9/3 视频训练现已完成，结果见下节。
-
-## 完整训练结果与绘图（2026-09-20）
-
-运行目录：`H:\dataset\JSCAS_experiments\frozen_dinov2\20260920_122914_522`。
-20 轮完成；按验证损失最低选中的第 1 轮：训练准确率 94.96%，验证准确率 75.73%，验证 macro-F1 68.61%。
-最后一轮训练准确率 98.25%、验证准确率 73.85%，验证损失由最佳 0.900 升至 2.318，存在过拟合迹象。
-
-默认训练保存 CSV/JSON，不自动画图。已生成的 learning_curves.png 和 validation_diagnostics.png 位于该运行目录的 plots 下。
-旧单视频 training_curve.png 保留在 phase1_video01/20260920_phase1 中。
-
-绘图脚本已移至 scripts，使用独立环境，不修改训练依赖。对尚无 plots 目录的新实验运行：
-
-```powershell
-uv run --isolated --no-project --with matplotlib==3.11.2 python scripts/plot_training_result.py "H:\dataset\JSCAS_experiments\frozen_dinov2\新实验目录"
-```
-
-已有 plots 时拒绝覆盖；仅读取结果，不重新训练。
+代码验证：Ruff 通过；测试套件 162 项通过、7 项跳过（Windows 上的 POSIX 脚本检查及训练环境缺少绘图库的检查）。
+提交前清理后再次通过上述检查；另用 Git Bash 实际通过全部 SH 语法检查，以及 train、retrain_head、crossval 的 6 个成功/失败启动用例。
+绘图已在独立 Matplotlib 环境实际执行并检查结果。

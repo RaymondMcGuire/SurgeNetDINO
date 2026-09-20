@@ -41,3 +41,26 @@ def test_batch_launchers_pause_and_preserve_status(tmp_path, name):
         assert result.stdout.count(marker) == 1
         # pause prints a localized prompt after the result; do not assume its language.
         assert result.stdout.split(marker)[1].strip()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows cmd.exe")
+@pytest.mark.parametrize("name", ["retrain_head", "crossval"])
+def test_cached_head_batch_launchers(tmp_path, name):
+    source = (Path(__file__).resolve().parents[1] / "scripts" / f"{name}.bat").read_text()
+    directory = tmp_path / "scripts"
+    directory.mkdir()
+    (tmp_path / "uv.lock").write_text("")
+    (tmp_path / "features.pt").write_text("stub only")
+    (tmp_path / "profiles.json").write_text("stub")
+    for code in (0, 7):
+        stub = re.sub(r"(?m)^uv [^\n]+", f"echo HEAD_COMMAND\ncmd /d /c exit {code}", source)
+        stub = stub.replace("where uv >nul 2>&1", "cmd /d /c exit 0")
+        script = directory / f"{name}.bat"
+        script.write_text(stub)
+        result = subprocess.run(["cmd", "/d", "/c", str(script), str(tmp_path / "features.pt"),
+                                 "low", str(tmp_path / f"run{code}"), str(tmp_path / f"splits{code}"),
+                                 str(tmp_path / "profiles.json")],
+                                input=b"\n", capture_output=True, timeout=10)
+        assert result.returncode == code, result.stdout + result.stderr
+        assert result.stdout.count(b"HEAD_COMMAND") == (2 if name == "crossval" and code == 0 else 1)
+        assert f"Script finished with exit code {code} (0 = success).".encode() in result.stdout
