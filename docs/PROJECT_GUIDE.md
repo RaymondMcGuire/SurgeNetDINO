@@ -1,14 +1,16 @@
 # SurgeNetDINO 项目说明
 
-更新：2026-09-19；工程版本：0.3.0。
+更新：2026-09-20；工程版本：0.3.0。
+
+项目目标：参加 [第 6 届 JSCAS AI Challenge 2026](https://github.com/modafone/jscaschallenge2026/)，利用 SurgeNetDINO 构建手术阶段识别流程。Basic 面向单图分类，Advanced 面向视频阶段分段。当前本地数据初检与预处理准备记录位于 `outputs/jscas_audit/README.md`（本地文件，不提交数据清单到 Git）。
 
 ## 1. 项目现在在做什么
 
 这是 SurgeNetDINO 的运行工程重构：把上游模型创建与权重加载整理成统一的注册表、TOML 配置、Python API 和命令行，使用 uv 固定依赖。
 模型计算仍使用 timm 的原生实现，没有重写 Transformer、attention 或 DINO 训练算法。
 
-已实现：八种模型选择、作者权重下载、本地权重读取与校验、CPU/CUDA 检查、合成前向/反向检查、单图特征提取、参数冻结开关。
-未实现：数据集读取与划分、监督分类训练循环、时序网络、分类指标评价、比赛提交文件、大规模自监督预训练。
+已实现：八种模型选择、权重加载与校验、CPU/CUDA 检查、特征提取、参数冻结，以及 [训练流程](TRAINING.md) 的分类清单读取、冻结特征缓存、按视频划分的线性分类训练、独立验证诊断和 GPU 三档校准。
+未实现：时序网络、比赛提交文件、大规模自监督预训练。
 
 ## 2. DINO、特征与分类的关系
 
@@ -16,16 +18,16 @@
 自监督预训练让模型学习视觉特征，并不自动赋予模型你的手术阶段名称。
 相关背景见[原论文](https://proceedings.mlr.press/v315/jong26a.html)和 [DINOv2 官方仓库](https://github.com/facebookresearch/dinov2)。
 
-当前默认流程：**图片 → DINO 编码器 → 特征向量**。
-未来的阶段分类流程：**图片 → DINO 编码器 → 用阶段标签训练的分类头 → 各阶段分数 / 阶段名称**。
+`encode` 的流程：**图片 → DINO 编码器 → 特征向量**。
+`predict-head` 的流程：**图片 → 冻结 DINO 编码器 → 用阶段标签训练的分类头 → 各阶段分数 / 原始阶段编号**。
 
 - `num_classes=0`：输出 `[B,D]` 特征。B 是图片数量，D 是特征维数。
 - `num_classes=C>0`：创建 C 类分类头，输出 C 个原始分数（logits），不是自动得到已训练分类器，也不是直接得到概率。
 - 使用作者的主干权重时，新分类头仍然随机，必须训练。
-- 已有兼容的完整分类器权重时，可用 `weights="local"`、`weights_scope="full"` 恢复主干和分类头；当前 CLI 仍不提供阶段名称映射。
+- 已有兼容的完整 timm 分类器权重时，可用 `weights="local"`、`weights_scope="full"` 恢复。第一阶段单独保存的 `head.pt` 使用 `predict-head`，其中包含标签映射及所需编码器身份。
 
 默认 Base 模型的 `[1,768]` 表示一张图的 768 个特征数值，不是 768 类或预测未来 768 帧。
-当前程序不输出检测框、分割掩码或手术阶段标签；这些需要对应任务头及训练/评价代码。
+第一阶段能够输出手术阶段编号；不输出检测框或分割掩码。
 
 ## 3. demo 的真实执行过程
 
@@ -146,7 +148,9 @@ v2/v3 的 768 维特征含义不同。换编码器、权重或预处理后，需
 | `surgenet_dino/weights.py` | 下载、本地读取、哈希和权重兼容性校验 |
 | `surgenet_dino/runtime.py` | 设备检查与图片预处理 |
 | `surgenet_dino/provenance.py` | 特征空间来源标识 |
-| `surgenet_dino/cli.py` | list / plan / doctor / smoke / encode |
+| `surgenet_dino/cli.py` | 原有命令及 calibrate-gpu / cache-features / train-head / predict-head |
+| `surgenet_dino/training.py` | 分类数据、冻结缓存、校准流程、线性头训练与预测 |
+| `surgenet_dino/gpu.py` | 单卡显存预算、批间节奏、温度与 GPU 采样 |
 | `load_models.py` | 保留旧文件入口，转调新 CLI |
 | `examples/feature_api.py` | 直接使用 Python API 提取单图特征的示例 |
 | `scripts/` | Windows / Linux 启动脚本 |
@@ -180,7 +184,7 @@ uv run --locked --extra cu128 python -m examples.feature_api --config configs/di
 批处理中的 init/pretrained 外部操作通过替代命令检查控制流程，不声称实际下载/安装已经执行。
 历史交付环境的 `90 passed, 11 skipped` 是旧记录，不能代表当前机器；当前结果也不等于模型识别准确率。
 
-下一步若要做阶段分类，需要先确定数据、类别和按手术划分的训练/验证集，再实现分类头训练与评价；时序识别还需要连续帧输入和时序模型。
+单视频调试入口已替换为 scripts/train.bat，读取固定 9/3 视频划分；完整跨视频训练已完成，结果见 TRAINING.md。时序识别还需要连续帧输入和时序模型。
 原始大规模预训练配方与许可说明见 [UPSTREAM_REFERENCES.md](UPSTREAM_REFERENCES.md)。
 
 ## 8. DINOv2-Base 作者权重验证（2026-09-19）
@@ -197,3 +201,14 @@ uv run --locked --extra cu128 python -m examples.feature_api --config configs/di
 
 这次仍使用合成随机输入，只验证真实权重的加载与计算；尚未测量真实图片特征质量或分类准确率。
 `demo` 仍使用随机权重，不会因为缓存里已有权重而改变行为。真实图片应使用第 4 节的 `encode` 命令；已有缓存时可加 `--offline` 禁止联网。
+
+## 9. JSCAS Basic 数据入口约定（2026-09-20）
+
+原始数据保留在 H:\dataset\JSCAS AI Challenge；派生案例放在 H:\dataset\JSCAS_preprocessed\video01_1fps。
+该单视频案例已经抽帧并核对，当前筛选后的 Basic 分类入口是 `basic_challenge/data/01/classification_01.csv`（4719 张），而不是筛选前的 annotation_01.csv（4720 行）。
+筛选排除 x、结束标记 e，以及整张图所有 RGB 像素 <= 1 的近黑图片。排除文件名、原标签、原因和最大像素值保存在 excluded_01.csv，规则及分类统计保存在 classification_filter.json。原图与原标注保留。
+实现训练数据读取器时，必须显式读取分类清单并核对文件和标签；缺失清单时应报错，禁止退回 images 目录扫描。后续其他视频需分别筛选并按整台手术划分训练/验证；不能把单视频案例的数量写死到通用训练器。
+该约定仅针对 Basic 分类，不适用于需要保留 x 与时间连续性的 Advanced 数据。正式训练器读取汇总七列清单和独立 split.json，使用说明见 [TRAINING.md](TRAINING.md)。
+
+全部已标注视频的预处理与实验划分分开存储，目录、CSV 格式与复现规则见 [DATASET.md](DATASET.md)。
+预处理目录保留可复用图片和标签；实验目录用独立清单引用图片，不能通过复制图片或随机拆帧造成视频跨组。

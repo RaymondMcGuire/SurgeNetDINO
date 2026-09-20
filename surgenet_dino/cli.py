@@ -49,6 +49,41 @@ def make_parser() -> argparse.ArgumentParser:
     encode.add_argument("--image", type=Path, required=True)
     encode.add_argument("--output", type=Path, required=True)
     encode.add_argument("--overwrite", action="store_true")
+    for command, help_text in (
+        ("calibrate-gpu", "Measure three GPU profiles on real labeled images"),
+        ("cache-features", "Export frozen pretrained features from a classification manifest"),
+        ("train-head", "Train a 13-class head with video-disjoint validation"),
+        ("predict-head", "Predict phase labels with a trained head and its matching encoder"),
+    ):
+        phase = sub.add_parser(command, help=help_text)
+        _common(phase)
+        phase.set_defaults(config=Path(__file__).resolve().parents[1] / "configs/frozen_dinov2.toml")
+        phase.add_argument("--output-dir", type=Path, required=True, help="New directory; never overwritten")
+        if command != "calibrate-gpu":
+            phase.add_argument("--gpu-profile", choices=("low", "medium", "high"), default="low")
+        else:
+            phase.set_defaults(gpu_profile="low")
+        phase.add_argument("--gpu-memory-fraction", type=float)
+        phase.add_argument("--gpu-duty-cycle", type=float)
+        phase.add_argument("--max-gpu-temperature", type=float, help="Default 75 C, or calibrated value")
+        phase.add_argument("--cpu-threads", type=int, help="Default 2, or calibrated value")
+        phase.set_defaults(profiles=None, batch_size=None)
+        if command in {"cache-features", "train-head"}:
+            phase.add_argument("--profiles", type=Path, help="profiles.json from calibrate-gpu")
+        if command == "cache-features":
+            phase.add_argument("--batch-size", type=int, help="Feature extraction batch override")
+            phase.add_argument("--split", type=Path, required=True, help="Audited split.json")
+        if command == "calibrate-gpu":
+            phase.add_argument("--manifest", type=Path, required=True)
+        if command == "train-head":
+            phase.add_argument("--features", type=Path, required=True)
+            phase.add_argument("--head-batch-size", type=int, default=64)
+            phase.add_argument("--epochs", type=int, default=20)
+            phase.add_argument("--learning-rate", type=float, default=.001)
+            phase.add_argument("--weight-decay", type=float, default=.0001)
+        if command == "predict-head":
+            phase.add_argument("--head", type=Path, required=True)
+            phase.add_argument("--image", type=Path, required=True, nargs="+")
     return parser
 
 
@@ -241,6 +276,10 @@ def main(argv: list[str] | None = None) -> int:
             return _plan(args)
         if args.command == "doctor":
             return _doctor(args.require_cuda)
+        if args.command in {"calibrate-gpu", "cache-features", "train-head", "predict-head"}:
+            from .training import run
+
+            return run(args, _configuration(args))
         return _run_model(args)
     except (OSError, ValueError, RuntimeError, ImportError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

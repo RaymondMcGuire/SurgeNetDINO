@@ -1,0 +1,12 @@
+# Verified surgical backbone; offline, frozen, float32 feature extraction.
+[model]
+name = "dinov2_vitb"
+weights = "surgenet"
+num_classes = 0
+weights_scope = "backbone"
+device = "cuda:0"
+cache_dir = ".cache/huggingface"
+revision = "9b2c75b7d469850b750a715b90cb91d6319f7e30"
+sha256 = "cd6e73e692074f1d58d2e4125998818121acc61748ff941849784616b03c2def"
+offline = true
+seed = 42
