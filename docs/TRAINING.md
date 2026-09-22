@@ -34,8 +34,26 @@ crossval.bat 参数为 FEATURES_PT、PROFILE、NEW_RUN_DIR、NEW_SPLIT_DIR、PRO
 
 四折新实验默认保存到 `H:\dataset\JSCAS_experiments\frozen_dinov2\crossval_regularized_<时间戳>`，
 划分另存到 `H:\dataset\JSCAS_experiments\splits` 下的同名新目录。
-BAT 成功或失败都会暂停，输出退出码。读取缓存时仍完整检查来源图片和清单，因此启动核验有读盘耗时。
-只核验缓存一次，各折共用核验结果，不重新抽帧、复制图片或运行 DINO。
+BAT 成功或失败都会暂停，输出退出码。读取缓存只检查清单、标签、划分和模型身份，不逐张读取、探测或哈希原图。
+各折共用已加载的缓存，不重新抽帧、复制图片或运行 DINO。图片完整检查已独立为下述手动操作。
+
+## 独立数据检查
+
+已预处理并检查过的数据可以直接训练；不要求每次训练前生成新的检查报告。
+新数据、搬移或修改图片后，或者需要排查损坏/黑帧时，按需执行：
+
+```powershell
+.\scripts\validate_data.bat "H:\dataset\JSCAS_preprocessed\labeled_1fps_v1"
+```
+
+默认双击使用上面的目录。脚本读取 dataset.json / samples.csv，只检查清单内的图片，
+逐张核对可读性、黑帧和 SHA256；报告写入该数据目录的 validation/<时间戳>。
+第二个参数可指定新的报告目录。检查失败会保存 failure.json，成功或失败均暂停。
+Linux 对应 `validate_data.sh DATASET_DIR [NEW_REPORT_DIR] [cpu|cu128]`。
+
+日常训练仍保留格式、标签映射、视频互斥和缓存身份等轻量检查，避免错用数据；不提前扫描图片。
+图像训练遇到缺失或损坏图片时，会在实际读到该图片时失败。缓存分类头训练无需原图在线。
+原 audit-features 命令仍是显式完整审计入口，训练脚本不会自动调用它。
 
 ## 四折约定
 
@@ -111,3 +129,35 @@ crossval.sh FEATURES_PT NEW_RUN_DIR NEW_SPLIT_DIR [PROFILE] [PROFILES_JSON] [cpu
 代码验证：Ruff 通过；测试套件 162 项通过、7 项跳过（Windows 上的 POSIX 脚本检查及训练环境缺少绘图库的检查）。
 提交前清理后再次通过上述检查；另用 Git Bash 实际通过全部 SH 语法检查，以及 train、retrain_head、crossval 的 6 个成功/失败启动用例。
 绘图已在独立 Matplotlib 环境实际执行并检查结果。
+
+## 离线时序网络（最终方案，2026-09-22）
+
+单帧方案停在 75% 到 77% 的原因是单帧信息上限，不是读出头的结构。`surgenet_dino/temporal/` 在冻结的 DINO 之上加入时间信息，不改主干。
+方法、无泄漏的评估协议、已知局限和做过但未采用的方案见 [TEMPORAL_DESIGN_中文.md](TEMPORAL_DESIGN_中文.md)。范围只限 12 个有标注视频的训练加验证。
+
+```powershell
+# 1. 从同一个冻结编码器提取 [最后一层 CLS | patch 均值] 特征（约 20 分钟，与原缓存校验通过才写入）
+.\scripts\temporal.bat cache-tokens --features <features.pt> --output-dir <特征目录>
+# 2. 四折交叉验证（约 40 分钟，单卡）
+.\scripts\temporal.bat cv --features <features.pt> --tokens <特征目录> --baseline <基线 csv> --output-dir <新目录>
+# 3. 学习曲线诊断与出图（只画曲线，不做任何选择）
+.\scripts\temporal.bat curves --features <features.pt> --tokens <特征目录> --output-dir <新目录>
+uv run --isolated --no-project --with matplotlib==3.11.2 python scripts\plot_temporal.py <新目录> --reference-result <第 2 步的 result.json>
+```
+
+<!-- TEMPORAL_RESULTS:BEGIN -->
+固定四折、完全嵌套（验证折不参与任何拟合或轮数选择）的结果：
+
+| 折 | 验证视频 | 准确率 | macro-F1 | 选定轮数 |
+|---|---|---:|---:|---:|
+| 1 | 01,10,14 | 89.53% | 86.00% | 50 |
+| 2 | 04,06,13 | 89.27% | 85.95% | 60 |
+| 3 | 05,12,16 | 88.52% | 83.06% | 60 |
+| 4 | 03,08,09 | 87.82% | 85.63% | 60 |
+
+四折合并：逐帧分类头 76.97%，时序网络 **88.79%**（macro-F1 85.13%，最差视频 81.7%，每视频约 19 段，真实 16.8 段）。相对已提交基线 76.69% 的配对提升为 +12.1 个点（+9.5 到 +14.9）。
+学习曲线显示验证集准确率约 20 轮后进入平台、到 120 轮没有下降，训练轮数由训练视频内层交叉验证选定，不需要再加 early stop。
+<!-- TEMPORAL_RESULTS:END -->
+
+预测是离线的：输入是同一个视频全部帧的序列，标准化用整段视频的统计量，时序网络会读取未来帧，不能对孤立的单张图片预测。
+这些仍是同样 12 个视频上的开发估计：嵌套保护了训练轮数的选择，但不保护方法本身的设计。

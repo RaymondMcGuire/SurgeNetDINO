@@ -5,6 +5,7 @@ import hashlib
 import importlib.metadata
 import io
 import json
+import os
 import platform
 import random
 import re
@@ -13,6 +14,7 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict
+from collections import Counter
 from pathlib import Path
 
 import torch
@@ -54,7 +56,8 @@ def digest_json(data) -> str:
     return hashlib.sha256(json.dumps(data, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def read_manifest(path: Path, inspect_images: bool = True) -> dict:
+def read_manifest(path: Path, inspect_images: bool = False) -> dict:
+    """Read metadata only unless explicitly performing a full image audit."""
     path = path.resolve(strict=True)
     records, names = [], set()
     with path.open(encoding="utf-8-sig", newline="") as stream:
@@ -81,7 +84,7 @@ def read_manifest(path: Path, inspect_images: bool = True) -> dict:
                     or not re.fullmatch(r"[0-9a-f]{64}", row["image_sha256"] or "")):
                 raise ValueError(f"Invalid frame identity/path: {name}")
             record = {"filename": filename, "video_id": video, "frame_index": frame,
-                      "image_path": str(image.resolve()), "phase_id": label,
+                      "image_path": os.path.abspath(image), "phase_id": label,
                       "target": LABELS.index(label), "sha256": row["image_sha256"]}
             if inspect_images:
                 data = image.read_bytes()
@@ -94,8 +97,6 @@ def read_manifest(path: Path, inspect_images: bool = True) -> dict:
                     raise ValueError(f"Unreadable image {image}: {exc}") from exc
                 if hashlib.sha256(data).hexdigest() != record["sha256"]:
                     raise ValueError(f"Image identity mismatch: {image}")
-            elif not image.is_file():
-                raise FileNotFoundError(image)
             records.append(record)
             if inspect_images and len(records) % 500 == 0:
                 print(f"Validated {len(records)} images", flush=True)
@@ -105,7 +106,42 @@ def read_manifest(path: Path, inspect_images: bool = True) -> dict:
     return {"manifest": str(path), "identity": digest_json(identity), **identity}
 
 
-def read_split(path: Path, inspect_images: bool = True) -> dict:
+def read_dataset(path: Path, inspect_images: bool = False) -> dict:
+    path = (path / "dataset.json" if path.is_dir() else path).resolve(strict=True)
+    definition = json.loads(path.read_text(encoding="utf-8"))
+    manifest = path.parent / "samples.csv"
+    if (definition.get("status") != "passed"
+            or definition.get("label_order", LABELS) != LABELS
+            or file_sha256(manifest) != definition.get("samples_csv_sha256")):
+        raise ValueError("Dataset/samples.csv metadata mismatch")
+    catalog = read_manifest(manifest, inspect_images=inspect_images)
+    return {"path": str(path), "sha256": file_sha256(path), **catalog}
+
+
+def validate_data(dataset: Path, output: Path) -> dict:
+    """Explicit, independent full audit. Training never invokes this operation."""
+    output.mkdir(parents=True, exist_ok=False)
+    started = time.perf_counter()
+    try:
+        catalog = read_dataset(dataset, inspect_images=True)
+        rows = catalog["records"]
+        result = {"status": "passed", "dataset": catalog["path"],
+                  "dataset_sha256": catalog["sha256"],
+                  "manifest_sha256": catalog["manifest_sha256"],
+                  "samples": len(rows), "labels": LABELS,
+                  "video_counts": dict(Counter(r["video_id"] for r in rows)),
+                  "class_counts": dict(Counter(r["phase_id"] for r in rows)),
+                  "images_checked": True, "checks": ["readability", "black_frames", "sha256"],
+                  "seconds": time.perf_counter() - started}
+        write_json(output / "result.json", result)
+        return result
+    except BaseException as exc:
+        write_json(output / "failure.json", {"status": "failed", "error": str(exc),
+                                             "type": type(exc).__name__})
+        raise
+
+
+def read_split(path: Path, inspect_images: bool = False) -> dict:
     path = path.resolve(strict=True)
     definition = json.loads(path.read_text(encoding="utf-8"))
     if (definition["status"] != "passed" or definition["label_order"] != LABELS
@@ -130,11 +166,8 @@ def read_split(path: Path, inspect_images: bool = True) -> dict:
     dataset_path = Path(definition["dataset_json"])
     if file_sha256(dataset_path) != definition["dataset_json_sha256"]:
         raise ValueError("Preprocessed dataset identity mismatch")
-    dataset = json.loads(dataset_path.read_text(encoding="utf-8"))
-    catalog = read_manifest(dataset_path.parent / "samples.csv", inspect_images=False)
-    if (dataset["status"] != "passed"
-            or catalog["manifest_sha256"] != dataset["samples_csv_sha256"]
-            or catalog["manifest_sha256"] != definition["samples_csv_sha256"]
+    catalog = read_dataset(dataset_path)
+    if (catalog["manifest_sha256"] != definition["samples_csv_sha256"]
             or sorted(train + validation, key=lambda r: r["filename"])
             != sorted(catalog["records"], key=lambda r: r["filename"])):
         raise ValueError("Split does not exactly partition the preprocessed allowlist")
@@ -267,7 +300,7 @@ def cache_features(args, config, output):
     return result
 
 
-def load_features(path):
+def load_features(path, *, inspect_images: bool = False):
     cache = torch.load(path, map_location="cpu", weights_only=True)
     if "split" not in cache:
         raise ValueError("Legacy single-video cache; regenerate with cache-features --split")
@@ -281,7 +314,7 @@ def load_features(path):
             or y.tolist() != [r["target"] for r in rows]
             or any(r["phase_id"] != LABELS[r["target"]] for r in rows)):
         raise ValueError("Invalid feature cache/label alignment")
-    actual = read_split(Path(cache["split"]["path"]))
+    actual = read_split(Path(cache["split"]["path"]), inspect_images=inspect_images)
     assert_identity(actual, cache["split"], "Dataset cache")
     return cache
 

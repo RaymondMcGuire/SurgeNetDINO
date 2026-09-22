@@ -74,8 +74,10 @@ def test_manifest_cache_alignment_and_source_changes(tmp_path):
     payload["targets"][0] = 0
     torch.save(payload, cache)
     Image.new("RGB", (8, 8), "red").save(tmp_path / "images_01/01_000000.png")
+    # Cached-head training trusts the prepared images; only an explicit audit rereads them.
+    assert load_features(cache)["features"].shape == (52, 3)
     with pytest.raises(ValueError, match="identity mismatch"):
-        load_features(cache)
+        load_features(cache, inspect_images=True)
 
 
 @pytest.mark.parametrize("problem", ["duplicate", "black", "unknown", "missing", "path", "corrupt"])
@@ -96,7 +98,47 @@ def test_bad_manifest_is_rejected(tmp_path, problem):
     else:
         image.unlink()
     with pytest.raises((ValueError, FileNotFoundError)):
-        read_manifest(path)
+        read_manifest(path, inspect_images=True)
+
+
+def test_catalog_loading_never_opens_or_stats_images(tmp_path, monkeypatch):
+    from surgenet_dino.training import read_dataset
+    split_path = split_fixture(tmp_path)
+    split = read_split(split_path)
+    rows = split["train"]["records"] + split["validation"]["records"]
+    cache = tmp_path / "features.pt"
+    torch.save({"features": torch.ones(52, 3), "targets": torch.tensor([r["target"] for r in rows]),
+                "split": split, "labels": LABELS,
+                "feature_identity": {"contract": {"output_dimension": 3}}}, cache)
+    original_open, original_stat = Path.open, Path.stat
+
+    def without_images(method):
+        def checked(path, *args, **kwargs):
+            assert path.suffix != ".png", "Startup must not open or stat source images"
+            return method(path, *args, **kwargs)
+        return checked
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "open", without_images(original_open))
+        patch.setattr(Path, "stat", without_images(original_stat))
+        loaded = load_features(cache)
+        assert loaded["split"]["train"]["records"] + loaded["split"]["validation"]["records"] == rows
+        assert read_dataset(tmp_path / "dataset.json")["records"] == rows
+    Path(rows[0]["image_path"]).unlink()
+    assert len(load_features(cache)["targets"]) == 52  # a missing image does not block metadata-only loading
+
+
+def test_explicit_dataset_audit_reports_success_and_bad_image(tmp_path):
+    split_fixture(tmp_path)
+    output = tmp_path / "audit"
+    assert main(["validate-data", "--dataset", str(tmp_path), "--output-dir", str(output)]) == 0
+    result = json.loads((output / "result.json").read_text())
+    assert result["images_checked"] is True and result["samples"] == 52
+    Image.new("RGB", (8, 8), "black").save(tmp_path / "images_01/01_000000.png")
+    failed = tmp_path / "bad_audit"
+    assert main(["validate-data", "--dataset", str(tmp_path), "--output-dir", str(failed)]) == 2
+    assert "Black image" in json.loads((failed / "failure.json").read_text())["error"]
+    assert not (failed / "result.json").exists()
 
 
 def test_split_rejects_video_leakage(tmp_path):

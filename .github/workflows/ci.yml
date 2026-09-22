@@ -28,7 +28,7 @@ jobs:
           fi
       - run: uv sync --locked --extra cpu --group dev
       - run: uv run --locked --extra cpu python -m surgenet_dino doctor
-      - run: uv run --locked --extra cpu ruff check surgenet_dino scripts tests examples load_models.py
+      - run: uv run --locked --extra cpu ruff check surgenet_dino scripts tests examples tools load_models.py
       - run: uv run --locked --extra cpu python -m pytest -q --junitxml=outputs/ci-results.xml
       - uses: actions/upload-artifact@v4
         if: always()

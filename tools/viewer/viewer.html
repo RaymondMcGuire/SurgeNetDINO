@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JSCAS · 手术阶段查看器</title>
+<style>
+:root{color-scheme:dark;--bg:#10151e;--panel:#19212e;--line:#303b4e;--text:#e7edf7;--muted:#99a9bf;--accent:#80cdbf}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,"Microsoft YaHei",sans-serif}
+button,input,select{font:inherit;color:inherit}button,select,input{border:1px solid var(--line);background:#202a3a;border-radius:6px;padding:8px 10px}button{cursor:pointer}button:hover:not(:disabled){background:#344257}button:disabled{opacity:.4;cursor:default}button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}input[type=checkbox]{accent-color:var(--accent)}a{color:var(--accent)}[hidden]{display:none!important}
+header{display:flex;align-items:center;gap:18px;padding:19px 28px;border-bottom:1px solid var(--line);background:#151c27}.brand{font-weight:750;letter-spacing:2px;font-size:21px}.brand span{color:var(--accent)}.title{border-left:1px solid var(--line);padding-left:18px;font-size:17px}header .local{margin-left:auto;color:var(--muted);font-size:12px}.dot{color:var(--accent)}
+nav{display:flex;align-items:center;gap:8px;padding:14px 28px;border-bottom:1px solid var(--line)}nav button{border-color:transparent;background:transparent;padding:9px 20px}nav button[aria-selected=true]{background:#25443f;border-color:#42695e;color:#b5eee0}.mode-note{color:var(--muted);margin-left:auto;font-size:12px}
+.layout{display:grid;grid-template-columns:295px minmax(0,1fr);min-height:calc(100vh - 140px)}aside{padding:22px 18px;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:16px}.field{display:flex;flex-direction:column;gap:7px}.field>label,.section-label{color:var(--muted);font-size:12px;letter-spacing:.5px}select{width:100%;text-overflow:ellipsis}#source{font-size:12px}#sourceName{font-size:11px;color:var(--muted);overflow-wrap:anywhere}#videoInfo{color:var(--muted);font-size:12px}.check{display:flex;gap:7px;align-items:center}.segments-header{display:flex;justify-content:space-between;align-items:center}#segmentCount{font-size:12px;color:var(--muted)}#segments{max-height:48vh;overflow:auto;display:flex;flex-direction:column;gap:6px}.segment{text-align:left;display:flex;gap:10px;background:#171f2b;padding:10px;border-color:#283344}.segment .swatch{width:4px;flex-shrink:0;border-radius:2px}.segment .label{display:block;font-size:12px}.segment small{display:block;color:var(--muted);margin-top:3px;font-size:11px}.footnote{font-size:11px;color:var(--muted);margin-top:auto;padding-top:12px}
+main{min-width:0;padding:22px 28px 32px}.toolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:14px}.eyebrow{font-size:11px;letter-spacing:1px;color:var(--accent)}h1{font-size:22px;margin:3px 0 0;font-weight:600}#fileName{color:var(--muted);font-size:12px}.badge{border:1px solid var(--line);padding:5px 10px;border-radius:5px;color:var(--muted);font-size:12px}#message{padding:11px 14px;border:1px solid #48546b;background:#222d40;border-radius:6px;margin-bottom:12px;overflow-wrap:anywhere}#message.error{background:#3c252b;border-color:#9b5966;color:#ffd7df}.empty{padding:90px 25px;text-align:center;border:1px dashed var(--line);border-radius:8px;color:var(--muted)}
+.image-stage{position:relative;background:#080c12;border:1px solid var(--line);border-radius:8px;aspect-ratio:16/9;max-height:57vh;display:flex;align-items:center;justify-content:center;overflow:hidden}.image-stage img{width:100%;height:100%;object-fit:contain;cursor:zoom-in}.image-stage .placeholder{position:absolute;color:var(--muted);text-align:center;padding:24px}#zoom{position:absolute;right:12px;bottom:12px;background:#19212edb;font-size:12px}.frame-caption{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;padding:11px 0;color:var(--muted);font-size:12px}.frame-caption strong{color:var(--text);font-weight:500}.phase-cards{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:3px 0 16px}.phase-card{padding:12px 14px;border:1px solid var(--line);background:var(--panel);border-radius:7px;border-left:4px solid var(--line)}.phase-card small{color:var(--muted)}.phase-card b{display:block;margin:3px 0;font-size:15px;font-weight:550}.phase-card .ja{font-size:11px;color:var(--muted)}#confidence{font-size:12px;color:var(--accent)}#excludedReason{color:#f0c894}
+.timeline-section{border:1px solid var(--line);border-radius:7px;padding:14px;background:#151c27}.timeline-title{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin-bottom:10px}.track-row{display:grid;grid-template-columns:40px minmax(0,1fr);gap:10px;align-items:center;margin:7px 0}.track-label{font-size:11px;color:var(--muted)}.track{height:23px;background:repeating-linear-gradient(135deg,#222b39 0,#222b39 4px,#1c2431 4px,#1c2431 8px);position:relative;border-radius:3px;cursor:crosshair}.track button{position:absolute;top:0;height:100%;padding:0;border:0;border-radius:0;opacity:.85;min-width:1px}.track button:hover{opacity:1;filter:brightness(1.2)}.track .cursor{position:absolute;top:-3px;bottom:-3px;width:2px;background:#fff;pointer-events:none;box-shadow:0 0 4px #000;z-index:2}.axis{display:flex;justify-content:space-between;padding-left:50px;color:var(--muted);font-size:10px}#seek{width:100%;accent-color:var(--accent);padding:0;margin:12px 0 3px;height:16px}.controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:13px}.controls input{width:112px}.controls label{font-size:12px;color:var(--muted)}.controls .spacer{flex:1}.controls select{width:auto}#counter{font-size:12px;color:var(--muted)}.difference{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:12px}.difference span{font-size:12px;color:var(--muted)}.difference button{font-size:12px;padding:6px 10px}
+details{margin-top:16px;color:var(--muted);font-size:12px}summary{cursor:pointer}#probabilities{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:9px 20px;padding-top:12px}.prob-head{display:flex;justify-content:space-between;font-size:11px}.bar{height:4px;background:#2c3545;margin-top:5px;border-radius:3px}.bar i{display:block;height:100%;border-radius:3px}.legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:13px;color:var(--muted);font-size:10px}.legend span{display:flex;align-items:center;gap:5px}.legend i{width:8px;height:8px;display:inline-block;border-radius:2px}dialog{border:1px solid var(--line);background:#10151e;color:var(--text);border-radius:8px;max-width:96vw;max-height:96vh;padding:14px}dialog::backdrop{background:#000c}dialog img{display:block;max-width:90vw;max-height:82vh;object-fit:contain}dialog button{float:right;margin-bottom:8px}#zoomTitle{font-size:12px;margin:6px 70px 12px 0}
+@media(min-width:1550px){main{padding-left:42px;padding-right:42px}.layout{grid-template-columns:325px 1fr}.image-stage{max-height:60vh}}@media(max-width:900px){header{padding:15px}header .local,.mode-note{display:none}nav{padding:10px}.layout{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid var(--line);padding:14px;display:grid;grid-template-columns:1fr 1fr}#segments{max-height:180px;grid-column:1/-1}.footnote{display:none}main{padding:16px}.phase-cards{grid-template-columns:1fr}.image-stage{max-height:none}.controls .spacer{display:none}}
+</style>
+</head>
+<body>
+<header><div class="brand">JSCAS<span> /</span></div><div class="title">手术阶段查看器</div><div class="local"><span class="dot">●</span> 本机只读 · 预处理图像</div></header>
+<nav role="tablist" aria-label="查看模式"><button id="annotationTab" role="tab" aria-selected="true">人工标注</button><button id="predictionTab" role="tab" aria-selected="false">模型预测</button><span class="mode-note" id="modeNote">依据原始标注核对阶段与图像</span></nav>
+<div class="layout">
+<aside>
+  <div class="field" id="sourceField" hidden><label for="source">实验 / 预测结果</label><select id="source"><option value="">请选择实验结果</option></select><div id="sourceName"></div><small id="missingData"></small></div>
+  <div class="field"><label for="video">视频</label><select id="video"></select><div id="videoInfo"></div></div>
+  <label class="check" id="excludedField"><input type="checkbox" id="includeExcluded">显示排除帧</label>
+  <div class="field"><label for="phaseFilter">按阶段筛选</label><select id="phaseFilter"><option value="">全部阶段</option></select></div>
+  <div class="segments-header"><span class="section-label" id="segmentsTitle">原始阶段片段</span><span id="segmentCount"></span></div>
+  <div id="segments" aria-label="阶段片段列表"></div>
+  <div class="footnote">图像按需读取，不修改原数据。<br>中文名称为辅助译文，日文保留官方定义。<br><a id="phaseSource" target="_blank" rel="noreferrer">官方阶段说明 ↗</a><br><span id="rootPath"></span></div>
+</aside>
+<main>
+  <div class="toolbar"><div><div class="eyebrow" id="modeLabel">ANNOTATION REVIEW</div><h1 id="heading">选择视频开始查看</h1></div><span class="badge" id="sourceBadge">人工标注</span></div>
+  <div id="message" role="status" hidden></div>
+  <div id="empty" class="empty">正在读取数据目录…</div>
+  <section id="workspace" hidden aria-label="图像和时间轴">
+    <div class="image-stage"><span class="placeholder" id="imageStatus">正在加载图像…</span><img id="frameImage" alt="" hidden><button id="zoom" disabled>放大原图 ↗</button></div>
+    <div class="frame-caption"><span id="fileName"></span><span>原始帧 <strong id="frameNumber"></strong> · <strong id="frameTime"></strong></span><span id="excludedReason"></span></div>
+    <div class="phase-cards">
+      <div class="phase-card" id="truthCard"><small>人工标注</small><b id="truthName"></b><div class="ja" id="truthJapanese"></div></div>
+      <div class="phase-card" id="predictionCard" hidden><small>模型预测</small><b id="predictionName"></b><div class="ja" id="predictionJapanese"></div><span id="confidence"></span></div>
+    </div>
+    <div class="timeline-section">
+      <div class="timeline-title"><span>完整视频时间轴</span><span id="duration"></span></div>
+      <div class="track-row"><span class="track-label">标注</span><div class="track" id="truthTrack" aria-label="人工标注时间轴"></div></div>
+      <div class="track-row" id="predictionTrackRow" hidden><span class="track-label">预测</span><div class="track" id="predictionTrack" aria-label="预测时间轴"></div></div>
+      <div class="track-row" id="differenceTrackRow" hidden><span class="track-label">差异</span><div class="track" id="differenceTrack" aria-label="预测差异时间轴"></div></div>
+      <div class="axis"><span>00:00:00</span><span id="axisEnd"></span></div>
+      <input id="seek" type="range" min="0" max="1" value="0" aria-label="按原始帧定位">
+      <div class="legend" id="legend"></div>
+    </div>
+    <div class="controls"><button id="previous" title="左方向键">← 上一张</button><button id="play">▶ 播放</button><button id="next" title="右方向键">下一张 →</button><label for="speed">速度</label><select id="speed"><option value="1000">1 张/秒</option><option value="500">2 张/秒</option><option value="200">5 张/秒</option></select><span id="counter"></span><span class="spacer"></span><label for="frameInput">帧号</label><input id="frameInput" type="number" min="0" step="1"><button id="goFrame">定位</button><label for="timeInput">时间</label><input id="timeInput" placeholder="时:分:秒 / 秒" aria-label="时间，时分秒或秒数"><button id="goTime">跳转</button></div>
+    <div class="difference" id="differenceControls" hidden><button id="prevDifference">↑ 上一处不一致</button><button id="nextDifference">↓ 下一处不一致</button><span id="differenceInfo"></span></div>
+    <details id="probabilityDetails" hidden><summary>当前帧各阶段概率 · 模型输出，未经置信度校准</summary><div id="probabilities"></div></details>
+  </section>
+</main>
+</div>
+<dialog id="zoomDialog"><button id="closeZoom">关闭 ×</button><div id="zoomTitle"></div><img id="zoomImage" alt="当前帧原图"></dialog>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const state = {catalog:null,mode:'annotation',data:null,rows:[],index:0,sourceVideos:[],generation:0,imageGeneration:0,playbackGeneration:0,request:null,imageRequest:null,blob:null,playing:false,timer:null,remember:{annotation:'01',prediction:''}};
+function text(id,value){$(id).textContent=value;}
+function message(value='',error=false){text('message',value);$('message').hidden=!value;$('message').classList.toggle('error',error);}
+function phaseName(id){return id==null?'未标注':`${id} · ${state.catalog.phases[id]?.name||'未知阶段'}`;}
+function time(seconds){const millis=Math.max(0,Math.round(seconds*1000)),total=Math.floor(millis/1000),fraction=millis%1000;return [Math.floor(total/3600),Math.floor(total/60)%60,total%60].map(v=>String(v).padStart(2,'0')).join(':')+(fraction?'.'+String(fraction).padStart(3,'0').replace(/0+$/,''):'');}
+function frameTime(frame){return time(frame/state.data.fps);}
+function option(value,label){const node=document.createElement('option');node.value=value;node.textContent=label;return node;}
+function isPrediction(){return state.mode==='prediction';}
+function stop(){state.playbackGeneration++;state.playing=false;clearTimeout(state.timer);text('play','▶ 播放');}
+function clearImage(){state.imageGeneration++;state.imageRequest?.abort();$('zoomDialog').close();$('frameImage').hidden=true;$('frameImage').removeAttribute('src');$('zoom').disabled=true;if(state.blob){URL.revokeObjectURL(state.blob);state.blob=null;}text('imageStatus','正在加载图像…');$('imageStatus').hidden=false;}
+function reset(){stop();state.request?.abort();state.request=new AbortController();state.generation++;clearImage();state.data=null;state.rows=[];$('workspace').hidden=true;$('empty').hidden=false;text('heading','选择视频开始查看');text('empty','正在加载…');$('segments').replaceChildren();text('segmentCount','');text('videoInfo','');message();return state.generation;}
+async function api(path){const response=await fetch(path,{signal:state.request.signal,cache:'no-store'});const data=await response.json();if(!response.ok)throw Error(data.error||'加载失败');return data;}
+function fail(error,generation){if(error.name==='AbortError'||generation!==state.generation)return;message(error.message,true);text('empty','数据暂时无法查看，请检查上方提示。');}
+function populateVideos(){
+  const videos=isPrediction()?state.sourceVideos:state.catalog.videos.filter(v=>v.labeled);
+  $('video').replaceChildren(...videos.map(v=>option(v.id,`视频 ${v.id}${v.available?'':' · 缺少预处理数据'}`)));
+  const remembered=state.remember[state.mode];if(videos.some(v=>v.id===remembered))$('video').value=remembered;
+  if(!videos.length)$('video').append(option('','暂无可查看视频'));
+}
+async function loadSource(){
+  const generation=reset();const source=$('source').value;state.sourceVideos=[];populateVideos();
+  text('sourceName',state.catalog.sources.find(s=>s.id===source)?.name||'');
+  if(!source){text('empty','请选择一份实验结果，查看预测阶段与图像。');return;}
+  try{const result=await api(`/api/prediction?source=${encodeURIComponent(source)}`);if(generation!==state.generation)return;state.sourceVideos=result.videos;populateVideos();await loadVideo();}catch(error){fail(error,generation);}
+}
+async function loadVideo(){
+  const generation=reset();const video=$('video').value;state.remember[state.mode]=video;
+  text('heading',video?`视频 ${video}`:'选择视频开始查看');
+  if(!video){text('empty','暂无可查看视频。');return;}
+  const source=isPrediction()?`&source=${encodeURIComponent($('source').value)}`:'';
+  try{
+    const data=await api(`/api/video?video=${encodeURIComponent(video)}${source}`);if(generation!==state.generation)return;
+    state.data=data;text('heading',`视频 ${video}`);text('videoInfo',`${data.labeled?'已标注':'未标注'} · ${data.rows.length.toLocaleString()} 张抽帧 · ${data.fps} fps 原视频`);
+    text('duration',`${time(data.end/data.fps)} · 每 ${data.step} 原始帧抽取一张`);text('axisEnd',time(data.end/data.fps));$('seek').max=data.end-1;
+    $('phaseFilter').replaceChildren(option('','全部阶段'));
+    const key=isPrediction()?'predicted':'truth';const labels=new Set(data.rows.map(r=>r[key]).filter(v=>v!=null));
+    for(const id of state.catalog.phase_order)if(labels.has(id))$('phaseFilter').append(option(id,phaseName(id)));
+    $('empty').hidden=true;$('workspace').hidden=false;drawTracks();filterRows();if(data.warnings.length)message(data.warnings.join(' '));
+  }catch(error){fail(error,generation);}
+}
+function switchMode(mode){
+  if(state.mode===mode)return;state.mode=mode;
+  $('annotationTab').setAttribute('aria-selected',String(!isPrediction()));$('predictionTab').setAttribute('aria-selected',String(isPrediction()));
+  $('sourceField').hidden=!isPrediction();$('excludedField').hidden=isPrediction();$('predictionCard').hidden=!isPrediction();$('predictionTrackRow').hidden=!isPrediction();$('differenceTrackRow').hidden=!isPrediction();$('differenceControls').hidden=!isPrediction();$('probabilityDetails').hidden=!isPrediction();
+  text('modeNote',isPrediction()?'查看模型结果，有真值时独立对照':'依据原始标注核对阶段与图像');text('modeLabel',isPrediction()?'PREDICTION REVIEW':'ANNOTATION REVIEW');text('sourceBadge',isPrediction()?'模型预测':'人工标注');text('segmentsTitle',isPrediction()?'预测阶段片段':'原始阶段片段');
+  if(isPrediction())loadSource();else{populateVideos();loadVideo();}
+}
+function filterRows(){
+  if(!state.data)return;stop();message();const frame=state.rows[state.index]?.frame;const phase=$('phaseFilter').value;const key=isPrediction()?'predicted':'truth';
+  state.rows=state.data.rows.filter(r=>(isPrediction()||$('includeExcluded').checked||!r.excluded)&&(!phase||r[key]===phase));
+  renderSegments();if(!state.rows.length){clearImage();$('workspace').hidden=true;$('empty').hidden=false;text('empty','当前筛选条件下没有图片，请调整阶段或排除帧选项。');return;}
+  $('workspace').hidden=false;$('empty').hidden=true;const initial=isPrediction()?state.rows.find(r=>r.predicted!=null)?.frame:null;renderFrame(nearest(frame??initial??state.rows[0].frame));
+}
+function nearest(frame){let lo=0,hi=state.rows.length;while(lo<hi){const mid=(lo+hi)>>1;if(state.rows[mid].frame<frame)lo=mid+1;else hi=mid;}if(lo===0)return 0;if(lo===state.rows.length)return lo-1;return frame-state.rows[lo-1].frame<=state.rows[lo].frame-frame?lo-1:lo;}
+function seek(frame){
+  stop();if(!state.rows.length)return;if(!Number.isFinite(frame)||frame<0||frame>=state.data.end){message(`请输入 0 到 ${state.data.end-1} 之间的帧号。`,true);return;}
+  const index=nearest(frame),actual=state.rows[index].frame;
+  message(actual===frame?'':`请求帧 ${Math.round(frame)}（${frameTime(frame)}）不在当前可用抽帧中，已定位最近图片：帧 ${actual}（${frameTime(actual)}）。`);renderFrame(index);
+}
+function goSegment(segment){
+  stop();const index=state.rows.findIndex(r=>r.frame>=segment.start&&r.frame<segment.end);
+  if(index<0){message(`该片段 [${segment.start}, ${segment.end}) 在当前筛选条件下没有可用图片。`);return;}
+  message(`阶段区间 [${segment.start}, ${segment.end})；显示该片段首张可用图片：原始帧 ${state.rows[index].frame}。`);renderFrame(index);
+}
+function renderSegments(){
+  const segments=isPrediction()?state.data.prediction_segments:state.data.truth_segments,phase=$('phaseFilter').value;
+  const shown=segments.filter(s=>s.end>s.start&&(!phase||s.phase===phase)&&(isPrediction()||$('includeExcluded').checked||!['x','e'].includes(s.phase)));
+  const fragment=document.createDocumentFragment();
+  for(const segment of shown){const button=document.createElement('button');button.className='segment';const swatch=document.createElement('span');swatch.className='swatch';swatch.style.background=state.catalog.phases[segment.phase].color;
+    const body=document.createElement('span'),label=document.createElement('span'),detail=document.createElement('small');label.className='label';label.textContent=phaseName(segment.phase);detail.textContent=`${frameTime(segment.start)} – ${frameTime(segment.end)} · [${segment.start}, ${segment.end})`;
+    body.append(label,detail);button.append(swatch,body);button.title=state.catalog.phases[segment.phase].ja;button.onclick=()=>goSegment(segment);fragment.append(button);}
+  $('segments').replaceChildren(fragment);text('segmentCount',`${shown.length} 个片段`);
+}
+function drawTrack(id,segments,difference=false){
+  const track=$(id);track.replaceChildren();
+  for(const s of segments){if(s.end<=s.start)continue;const button=document.createElement('button');button.style.left=`${100*s.start/state.data.end}%`;button.style.width=`${100*(s.end-s.start)/state.data.end}%`;button.style.background=difference?'#ed8c94':state.catalog.phases[s.phase].color;button.title=`${difference?'预测与真值不一致':phaseName(s.phase)} · [${s.start}, ${s.end}) · ${frameTime(s.start)} – ${frameTime(s.end)}`;button.setAttribute('aria-label',button.title);button.onclick=event=>{event.stopPropagation();seek(Math.min(state.data.end-1,Math.round((event.clientX-track.getBoundingClientRect().left)/track.clientWidth*state.data.end)));};button.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();goSegment(s);}};track.append(button);}
+  const cursor=document.createElement('span');cursor.className='cursor';track.append(cursor);
+  track.onclick=event=>seek(Math.min(state.data.end-1,Math.round((event.clientX-track.getBoundingClientRect().left)/track.clientWidth*state.data.end)));
+}
+function mismatch(row){return row.truth!=null&&row.predicted!=null&&row.truth!==row.predicted;}
+function drawTracks(){
+  drawTrack('truthTrack',state.data.truth_segments);drawTrack('predictionTrack',state.data.prediction_segments);
+  const diffs=[];for(const row of state.data.rows.filter(mismatch)){const end=Math.min(state.data.end,row.frame+state.data.step);if(diffs.length&&diffs.at(-1).end===row.frame)diffs.at(-1).end=end;else diffs.push({start:row.frame,end});}drawTrack('differenceTrack',diffs,true);
+  const compared=state.data.rows.filter(r=>r.truth!=null&&r.predicted!=null);const errors=compared.filter(mismatch).length;
+  text('differenceInfo',compared.length?`${errors.toLocaleString()} / ${compared.length.toLocaleString()} 张不一致 · 有预测 ${state.data.prediction_count.toLocaleString()} 张`:`未标注，无法比较 · 有预测 ${state.data.prediction_count.toLocaleString()} 张`);
+  $('legend').replaceChildren();const labels=new Set([...state.data.truth_segments,...state.data.prediction_segments].map(s=>s.phase));
+  for(const id of state.catalog.phase_order)if(labels.has(id)){const item=document.createElement('span'),swatch=document.createElement('i');swatch.style.background=state.catalog.phases[id].color;item.append(swatch,document.createTextNode(id));item.title=phaseName(id);$('legend').append(item);}
+  const note=document.createElement('span');note.textContent='斜纹：无该来源记录；阶段区间为左闭右开';$('legend').append(note);
+}
+function phaseCard(prefix,label,missing){const phase=state.catalog.phases[label];text(prefix+'Name',phase?phaseName(label):missing);text(prefix+'Japanese',phase?.ja||'');$(prefix==='truth'?'truthCard':'predictionCard').style.borderLeftColor=phase?.color||'var(--line)';}
+function imageURL(row){return `/api/image?video=${encodeURIComponent(state.data.id)}&frame=${row.frame}`;}
+async function renderFrame(index){
+  if(!state.rows.length)return;state.index=Math.max(0,Math.min(index,state.rows.length-1));const row=state.rows[state.index];clearImage();const generation=state.imageGeneration;state.imageRequest=new AbortController();const signal=state.imageRequest.signal;
+  text('fileName',`${state.data.id} / ${row.filename}`);text('frameNumber',row.frame);text('frameTime',frameTime(row.frame));text('counter',`${state.index+1} / ${state.rows.length.toLocaleString()}`);$('frameInput').value=row.frame;$('timeInput').value=frameTime(row.frame);$('seek').value=row.frame;
+  text('excludedReason',row.excluded?`已排除 · ${{phase_x:'体外阶段',all_pixels_at_most_1:'整图近黑',phase_e:'结束标记'}[row.excluded]||row.excluded}`:'');
+  phaseCard('truth',row.truth,'未标注');phaseCard('prediction',row.predicted,'无预测');text('confidence',`置信度：${row.confidence==null?'未提供':(row.confidence*100).toFixed(2)+'%'}`);
+  document.querySelectorAll('.cursor').forEach(c=>c.style.left=`${100*row.frame/state.data.end}%`);$('previous').disabled=state.index===0;$('next').disabled=state.index===state.rows.length-1;
+  $('prevDifference').disabled=!state.rows.slice(0,state.index).some(mismatch);$('nextDifference').disabled=!state.rows.slice(state.index+1).some(mismatch);
+  $('probabilities').replaceChildren();const scores=Object.entries(row.probabilities);
+  if(!scores.length)text('probabilities','此结果未提供各阶段概率。');
+  for(const [label,value] of scores.sort((a,b)=>b[1]-a[1])){const item=document.createElement('div'),head=document.createElement('div'),name=document.createElement('span'),score=document.createElement('span'),bar=document.createElement('div'),fill=document.createElement('i');head.className='prob-head';name.textContent=phaseName(label);score.textContent=`${(value*100).toFixed(2)}%`;head.append(name,score);bar.className='bar';fill.style.width=`${value*100}%`;fill.style.background=state.catalog.phases[label].color;bar.append(fill);item.append(head,bar);$('probabilities').append(item);}
+  try{
+    const response=await fetch(imageURL(row),{signal});if(!response.ok){const error=await response.json();throw Error(error.error||'图片读取失败');}
+    const blob=await response.blob();if(generation!==state.imageGeneration)return;state.blob=URL.createObjectURL(blob);
+    const decoded=new Image();decoded.src=state.blob;await decoded.decode();if(generation!==state.imageGeneration)return;
+    $('frameImage').src=state.blob;$('frameImage').alt=`视频 ${state.data.id}，原始帧 ${row.frame}，${phaseName(isPrediction()?row.predicted:row.truth)}`;$('frameImage').hidden=false;$('imageStatus').hidden=true;$('zoom').disabled=false;
+    for(const adjacent of [state.rows[state.index-1],state.rows[state.index+1]])if(adjacent)fetch(imageURL(adjacent),{signal}).then(r=>r.arrayBuffer()).catch(()=>{});
+  }catch(error){if(error.name==='AbortError'||generation!==state.imageGeneration)return;text('imageStatus',`图像无法显示：${error.message}`);stop();}
+}
+function step(direction){stop();message();renderFrame(state.index+direction);}
+async function tick(){if(!state.playing)return;if(state.index>=state.rows.length-1){stop();return;}const generation=state.playbackGeneration;await renderFrame(state.index+1);if(state.playing&&generation===state.playbackGeneration)state.timer=setTimeout(tick,Number($('speed').value));}
+function difference(direction){stop();for(let i=state.index+direction;i>=0&&i<state.rows.length;i+=direction)if(mismatch(state.rows[i])){message();renderFrame(i);return;}message('该方向没有更多不一致帧。');}
+function goTime(){const value=$('timeInput').value.trim();let seconds;if(/^\d+(\.\d+)?$/.test(value))seconds=Number(value);else if(/^\d+:\d{2}:\d{2}(\.\d+)?$/.test(value)){const parts=value.split(':').map(Number);if(parts[1]<60&&parts[2]<60)seconds=parts[0]*3600+parts[1]*60+parts[2];}if(seconds==null){message('时间请输入秒数或 HH:MM:SS，例如 21 或 00:00:21。',true);return;}seek(Math.round(seconds*state.data.fps));}
+$('annotationTab').onclick=()=>switchMode('annotation');$('predictionTab').onclick=()=>switchMode('prediction');$('source').onchange=loadSource;$('video').onchange=loadVideo;$('phaseFilter').onchange=filterRows;$('includeExcluded').onchange=filterRows;
+$('previous').onclick=()=>step(-1);$('next').onclick=()=>step(1);$('play').onclick=()=>{if(state.playing)stop();else{state.playing=true;text('play','Ⅱ 暂停');state.timer=setTimeout(tick,Number($('speed').value));}};
+$('goFrame').onclick=()=>seek($('frameInput').value.trim()===''?NaN:Number($('frameInput').value));$('goTime').onclick=goTime;$('frameInput').onkeydown=e=>{if(e.key==='Enter')$('goFrame').click();};$('timeInput').onkeydown=e=>{if(e.key==='Enter')goTime();};$('seek').onchange=()=>seek(Number($('seek').value));
+$('prevDifference').onclick=()=>difference(-1);$('nextDifference').onclick=()=>difference(1);
+function zoom(){if($('zoom').disabled)return;stop();$('zoomImage').src=state.blob;text('zoomTitle',`${$('fileName').textContent} · 原始帧 ${$('frameNumber').textContent}`);$('zoomDialog').showModal();}
+$('zoom').onclick=zoom;$('frameImage').onclick=zoom;$('closeZoom').onclick=()=>$('zoomDialog').close();
+document.addEventListener('keydown',event=>{if(!state.data||!state.rows.length||$('zoomDialog').open||event.target.closest('input,select,summary,[contenteditable]'))return;if(event.key==='ArrowLeft'){event.preventDefault();step(-1);}if(event.key==='ArrowRight'){event.preventDefault();step(1);}});
+async function init(){const generation=reset();try{state.catalog=await api('/api/catalog');$('phaseSource').href=state.catalog.phase_source;text('rootPath',state.catalog.root);const missing=state.catalog.videos.filter(v=>!v.available).map(v=>v.id);text('missingData',missing.length?`视频 ${missing.join('、')} 尚无预处理图片。`:'');for(const source of state.catalog.sources)$('source').append(option(source.id,source.name));populateVideos();await loadVideo();}catch(error){fail(error,generation);}}
+init();
+</script>
+</body>
+</html>

@@ -9,5 +9,5 @@ case "$backend" in
 esac
 [[ -f uv.lock ]] || { echo "ERROR: run bash scripts/init.sh first." >&2; exit 1; }
 uv run --locked --extra "$backend" python -m surgenet_dino doctor
-uv run --locked --extra "$backend" ruff check surgenet_dino scripts tests examples load_models.py
+uv run --locked --extra "$backend" ruff check surgenet_dino scripts tests examples tools load_models.py
 uv run --locked --extra "$backend" python -m pytest -q

@@ -38,6 +38,9 @@ def make_parser() -> argparse.ArgumentParser:
     _common(plan)
     doctor = sub.add_parser("doctor", help="Check versions, binary imports and optionally CUDA execution")
     doctor.add_argument("--require-cuda", action="store_true")
+    validation = sub.add_parser("validate-data", help="Explicit full image audit; not run during training")
+    validation.add_argument("--dataset", type=Path, required=True, help="Dataset directory or dataset.json")
+    validation.add_argument("--output-dir", type=Path, required=True, help="New audit report directory")
     smoke = sub.add_parser("smoke", help="One-model synthetic forward/backward check, not an accuracy test")
     _common(smoke)
     smoke.add_argument("--batch-size", type=int, default=1)
@@ -281,6 +284,10 @@ def main(argv: list[str] | None = None) -> int:
             return _plan(args)
         if args.command == "doctor":
             return _doctor(args.require_cuda)
+        if args.command == "validate-data":
+            from .training import validate_data
+            print(json.dumps(validate_data(args.dataset, args.output_dir), indent=2, ensure_ascii=False))
+            return 0
         if args.command in {"calibrate-gpu", "cache-features", "train-head", "predict-head",
                             "crossval-head", "audit-features"}:
             from .training import run

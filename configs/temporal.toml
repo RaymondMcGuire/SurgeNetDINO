@@ -1,0 +1,24 @@
+# Offline temporal phase network on frozen tokens ([final CLS | mean patch token], per-video standardised).
+# Cross-fitted linear heads -> dilated TCN with one global self-attention layer -> argmax.
+# The epoch is chosen by inner grouped folds; nothing is tuned on a held-out fold.
+[temporal]
+long_gap_seconds = 300
+head_epochs = 5
+inner_folds = 3
+channels = 64
+refine_channels = 48
+layers = 10
+dropout = 0.3
+pca = 32
+attention_layers = 1
+attention_heads = 4
+attention_factor = 16
+epochs = 60
+epoch_checks = 6
+learning_rate = 5e-4
+weight_decay = 0.01
+smoothing_weight = 0.15
+label_smoothing = 0.05
+seeds = 5
+augment = true
+noise = 0.5

@@ -207,7 +207,8 @@ def run_experiment(args, config, output):
 
     if args.command == "crossval-head" and args.split_output_dir.exists():
         raise FileExistsError(args.split_output_dir)
-    cache = load_features(args.features)
+    cache = (load_features(args.features, inspect_images=True) if args.command == "audit-features"
+             else load_features(args.features))
     contract = cache["feature_identity"]["contract"]
     if config.name != contract["model"] or (
             config.sha256 and config.sha256.lower() != contract.get("checkpoint_sha256")):

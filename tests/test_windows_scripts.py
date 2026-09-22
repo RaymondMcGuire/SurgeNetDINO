@@ -64,3 +64,25 @@ def test_cached_head_batch_launchers(tmp_path, name):
         assert result.returncode == code, result.stdout + result.stderr
         assert result.stdout.count(b"HEAD_COMMAND") == (2 if name == "crossval" and code == 0 else 1)
         assert f"Script finished with exit code {code} (0 = success).".encode() in result.stdout
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows cmd.exe")
+@pytest.mark.parametrize("name", ["validate_data", "temporal"])
+def test_data_and_image_launchers_pause_on_success_and_failure(tmp_path, name):
+    source = (Path(__file__).resolve().parents[1] / "scripts" / f"{name}.bat").read_text()
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (tmp_path / "uv.lock").touch()
+    (tmp_path / "dataset.json").write_text("{}")
+    for code in (0, 7):
+        stub = re.sub(r"(?m)^uv [^\n]+", f"cmd /d /c exit {code}", source)
+        stub = stub.replace("where uv >nul 2>&1", "cmd /d /c exit 0")
+        script = scripts / f"{name}.bat"
+        script.write_text(stub)
+        args = [str(tmp_path), str(tmp_path / "report")] if name == "validate_data" else ["cv"]
+        result = subprocess.run(["cmd", "/d", "/c", str(script), *args],
+                                input=b"\n", capture_output=True, timeout=10)
+        assert result.returncode == code, result.stdout + result.stderr
+        marker = f"Script finished with exit code {code} (0 = success).".encode()
+        assert result.stdout.count(marker) == 1
+        assert result.stdout.split(marker)[1].strip()
