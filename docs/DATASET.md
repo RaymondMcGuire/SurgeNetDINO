@@ -100,6 +100,16 @@ python prepare_labeled.py split --dataset "H:\dataset\JSCAS_preprocessed\labeled
 
 换划分时使用新的输出目录，保留旧目录，记录新的种子与规则。不要在模型训练中隐式重新随机划分。
 
+### 逐秒运动特征（`motion_v1`，可选）
+
+时序网络的可选输入，同样在独立 OpenCV 环境里生成，训练环境不变。只读清单里的 `video_id` 和 `frame_index`，不读标签；对每个已编目的帧 f 顺序解码原视频的 [f−15, f+15) 共 30 帧，写出 16 个非负的帧差和 DIS 光流统计量，每帧一行（`motion.csv`），参数与各视频信息记录在 `motion.json`。输出目录必须尚不存在。
+
+```powershell
+uv run --isolated --no-project --python 3.12 --with opencv-python-headless==5.0.0.93 python tools\motion_features.py extract --catalogue "H:\dataset\JSCAS_preprocessed\labeled_1fps_v1\samples.csv" --source "H:\dataset\JSCAS AI Challenge" --output "H:\dataset\JSCAS_preprocessed\motion_v1" --workers 6
+```
+
+本次生成：74,430 行，6 进程 1,750 秒。`tools\motion_features.py self-test --directory <临时目录>` 用合成视频检查静止与运动两秒的特征大小关系。加载时每个已编目的帧都必须有且只有一行，否则报错。
+
 ## 2026-09-20 完成结果
 
 12 个已标注视频全部完成核验；视频 01 复用原图，其余 11 个新抽帧。

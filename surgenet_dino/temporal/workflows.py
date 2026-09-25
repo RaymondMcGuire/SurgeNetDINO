@@ -162,16 +162,18 @@ def load_inputs(features, tokens_directory):
     return cache, records, cache["targets"], tokens, provenance
 
 
-def predict_fold(x, targets, records, timelines, fit_videos, held, head_options, options, seed, guard, inner_seed):
+def predict_fold(x, targets, records, timelines, fit_videos, held, head_options, options, seed, guard, inner_seed,
+                 extra=None):
     """Everything is learned from fit_videos; `held` is touched only by the final prediction."""
     from . import constraints, tcn
     from .emissions import stacked_emissions
-    inner = tcn.inner_cv(x, targets, records, timelines, fit_videos, head_options, options, seed, guard, inner_seed)
+    inner = tcn.inner_cv(x, targets, records, timelines, fit_videos, head_options, options, seed, guard, inner_seed,
+                         extra)
     chosen, by_epoch = tcn.common_epoch(inner, targets, fit_videos)
     logits, ledger = stacked_emissions(x, targets, records, fit_videos, held, head_options, options.head_epochs,
                                        seed, guard)
     _, ensemble, per_seed, info = tcn.refit(x, targets, records, timelines, fit_videos, held, logits, head_options,
-                                            options, seed, guard, chosen, inner["rows"])
+                                            options, seed, guard, chosen, inner["rows"], extra)
     rules = constraints.training_rules(targets, timelines, fit_videos)
     constrained, changed = constraints.apply_rules(ensemble, timelines, held, rules)
     held_rows = torch.cat([inner["rows"][v] for v in held])
@@ -188,9 +190,10 @@ def predict_fold(x, targets, records, timelines, fit_videos, held, head_options,
 
 
 def run_cv(features, tokens_directory, folds_json, options, head_options, config, resources, output, *,
-           baseline=None, only_fold=None):
+           baseline=None, only_fold=None, motion=None):
     """Grouped outer folds; nothing is tuned on a held-out fold. The network's log-probabilities are
-    decoded under the order rules of each fold's training videos; the plain argmax is reported too."""
+    decoded under the order rules of each fold's training videos; the plain argmax is reported too.
+    `motion`: optional per-frame motion CSV (tools/motion_features.py), an extra network input only."""
     from ..gpu import CPUControl, GPUControl
     from ..runtime import resolve_device
     from .emissions import per_video_zscore
@@ -206,6 +209,11 @@ def run_cv(features, tokens_directory, folds_json, options, head_options, config
     if only_fold is not None and not 1 <= only_fold <= len(groups):
         raise ValueError("--only-fold is outside the fold range")
     x = per_video_zscore(tokens, records)
+    extra = None
+    if motion is not None:
+        from .motion import load_motion
+        values, motion_provenance = load_motion(motion, records)
+        extra, provenance = per_video_zscore(values, records), {**provenance, **motion_provenance}
     timelines = build_timelines(records, options.long_gap_seconds)
     device = resolve_device(config.device)
     control = GPUControl if device.type == "cuda" else CPUControl
@@ -217,7 +225,7 @@ def run_cv(features, tokens_directory, folds_json, options, head_options, config
             fit_videos = sorted(v for v in timelines if v not in held)
             print(f"Fold {k}/{len(groups)}: held-out {sorted(held)}", flush=True)
             part = predict_fold(x, targets, records, timelines, fit_videos, sorted(held), head_options, options,
-                                config.seed, guard, inner_seed=k)
+                                config.seed, guard, inner_seed=k, extra=extra)
             for row in part["rows"]:
                 network[row], frames[row] = part["network"][row], part["frames"][row]
                 constrained[row] = part["constrained"][row]

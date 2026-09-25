@@ -141,6 +141,9 @@ crossval.sh FEATURES_PT NEW_RUN_DIR NEW_SPLIT_DIR [PROFILE] [PROFILES_JSON] [cpu
 .\scripts\temporal.bat cache-tokens --features <features.pt> --output-dir <特征目录>
 # 2. 四折交叉验证（约 40 分钟，单卡）
 .\scripts\temporal.bat cv --features <features.pt> --tokens <特征目录> --baseline <基线 csv> --output-dir <新目录>
+# 2b. 可选：逐秒运动特征（独立 OpenCV 环境从 30 fps 原视频算，CPU 约 30 分钟），作为时序网络的附加输入
+uv run --isolated --no-project --python 3.12 --with opencv-python-headless==5.0.0.93 python tools\motion_features.py extract --catalogue <labeled_1fps_v1\samples.csv> --source "<原视频根目录>" --output <motion 目录> --workers 6
+.\scripts\temporal.bat cv --features <features.pt> --tokens <特征目录> --motion <motion 目录>\motion.csv --baseline <基线 csv> --output-dir <新目录>
 # 3. 学习曲线诊断与出图（只画曲线，不做任何选择）
 .\scripts\temporal.bat curves --features <features.pt> --tokens <特征目录> --output-dir <新目录>
 uv run --isolated --no-project --with matplotlib==3.11.2 python scripts\plot_temporal.py <新目录> --reference-result <第 2 步的 result.json>
@@ -159,6 +162,8 @@ uv run --isolated --no-project --with matplotlib==3.11.2 python scripts\plot_tem
 四折合并：逐帧分类头 76.97%，网络直接 argmax 88.83%，约束解码 **89.17%**（macro-F1 85.25%，最差视频 82.0%，每视频约 18 段，真实 16.8 段，段级 F1@0.75 从 0.528 升到 0.564）。相对已提交基线 76.69% 的配对提升为 +12.5 个点（+9.7 到 +15.4）。约束解码在三份独立的网络输出上分别提高 0.30、0.31、0.34 个点。
 学习曲线显示验证集准确率约 20 轮后进入平台、到 120 轮没有下降，训练轮数由训练视频内层交叉验证选定，不需要再加 early stop。
 <!-- TEMPORAL_RESULTS:END -->
+
+可选的运动特征（`--motion`，2026-09-25）：`tools/motion_features.py` 对每个已编目的帧取原视频前后各 15 帧，算帧差和 DIS 光流的 16 个幅值统计，log1p 后按视频标准化，只拼进时序网络的输入，分类头和 PCA 不变。按种子配对：种子 42 为 89.17% → 89.41%（+0.24），种子 43 为 89.51% → 90.03%（+0.52）；两种子均值 89.34% → 89.72%。基线换种子本身相差 0.34，所以这是约 +0.4 ± 0.3 的小而一致的提升：工程 8（81/82/83）相关错误减少约 15%，阶段 0/1/2/7/9 有一致的新增错误。细节见 [TEMPORAL_DESIGN_中文.md](TEMPORAL_DESIGN_中文.md) 4.3。
 
 预测是离线的：输入是同一个视频全部帧的序列，标准化用整段视频的统计量，时序网络会读取未来帧，不能对孤立的单张图片预测。
 这些仍是同样 12 个视频上的开发估计：嵌套保护了训练轮数的选择和顺序规则的读取，但不保护方法本身的设计。

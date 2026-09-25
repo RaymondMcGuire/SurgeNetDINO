@@ -155,8 +155,11 @@ def fit_pca(x, components):
     return {"mean": mean, "basis": basis, "scale": eigenvalues[order].clamp(min=1e-12).sqrt()}
 
 
-def build_inputs(timeline, logits, x, pca):
-    """[C,T] per-second inputs. Uses emissions, tokens and the observable timeline; never labels."""
+def build_inputs(timeline, logits, x, pca, extra=None):
+    """[C,T] per-second inputs. Uses emissions, tokens and the observable timeline; never labels.
+
+    `extra` [N,M]: optional label-free per-frame features (motion), already standardised per video.
+    """
     total = len(timeline)
     present = timeline.present
     rows = timeline.rows[present]
@@ -174,7 +177,12 @@ def build_inputs(timeline, logits, x, pca):
         flags[stop:, 5] = (seconds[stop:] - stop) / 3600.0
     flags[:, 3] = seconds / max(1, total - 1)
     flags[:, 4] = seconds / 3600.0
-    return torch.cat([emission, projected, flags], 1).T.float().contiguous()
+    parts = [emission, projected, flags]
+    if extra is not None:
+        motion = torch.zeros((total, extra.shape[1]), dtype=torch.float64)
+        motion[present] = extra[rows].double().clamp(-6, 6)
+        parts.append(motion)
+    return torch.cat(parts, 1).T.float().contiguous()
 
 
 def confusion_rows(logits, targets, rows):
@@ -239,8 +247,9 @@ def sequence_loss(outputs, labels, options):
     return loss
 
 
-def make_sequences(timelines, videos, logits, x, targets, pca):
-    return {v: (build_inputs(timelines[v], logits, x, pca), label_track(timelines[v], targets)) for v in videos}
+def make_sequences(timelines, videos, logits, x, targets, pca, extra=None):
+    return {v: (build_inputs(timelines[v], logits, x, pca, extra), label_track(timelines[v], targets))
+            for v in videos}
 
 
 @torch.no_grad()
@@ -309,7 +318,8 @@ def video_rows(records):
     return {v: torch.tensor(i) for v, i in rows.items()}
 
 
-def prepare(x, targets, records, timelines, training, apply, head_options, options, seed, guard, rows, logits=None):
+def prepare(x, targets, records, timelines, training, apply, head_options, options, seed, guard, rows, logits=None,
+            extra=None):
     """Sequences for `training` and `apply`. Everything fitted here (heads, projection) uses `training` only."""
     if logits is None:
         from .emissions import stacked_emissions
@@ -318,11 +328,12 @@ def prepare(x, targets, records, timelines, training, apply, head_options, optio
     training_rows = torch.cat([rows[v] for v in training])
     pca = fit_pca(x[training_rows], options.pca)
     confusion = confusion_rows(logits, targets, training_rows)
-    return (make_sequences(timelines, training, logits, x, targets, pca),
-            make_sequences(timelines, apply, logits, x, targets, pca), confusion)
+    return (make_sequences(timelines, training, logits, x, targets, pca, extra),
+            make_sequences(timelines, apply, logits, x, targets, pca, extra), confusion)
 
 
-def inner_cv(x, targets, records, timelines, fit_videos, head_options, options, seed, guard, inner_seed=0):
+def inner_cv(x, targets, records, timelines, fit_videos, head_options, options, seed, guard, inner_seed=0,
+             extra=None):
     """Out-of-video log-probabilities of every fit video, per seed and per predeclared epoch.
 
     Inner folds are re-nested from scratch: their own cross-fitted heads, projection and networks.
@@ -336,7 +347,7 @@ def inner_cv(x, targets, records, timelines, fit_videos, head_options, options, 
     for held in groups:
         training = [v for v in fit_videos if v not in held]
         sequences, validation, confusion = prepare(x, targets, records, timelines, training, sorted(held),
-                                                   head_options, options, seed, guard, rows)
+                                                   head_options, options, seed, guard, rows, extra=extra)
         held_rows = torch.cat([rows[v] for v in held])
         for s in range(options.seeds):
             _, snapshots = fit_tcn(sequences, options, seed + 1000 * (s + 1), guard, options.epochs,
@@ -355,10 +366,10 @@ def common_epoch(inner, targets, fit_videos):
 
 
 def refit(x, targets, records, timelines, fit_videos, apply_videos, logits, head_options, options, seed, guard,
-          epochs, rows):
+          epochs, rows, extra=None):
     """Final networks on all fit videos for a FIXED epoch count; no held-out data can influence them."""
     sequences, held_out, confusion = prepare(x, targets, records, timelines, fit_videos, apply_videos,
-                                             head_options, options, seed, guard, rows, logits)
+                                             head_options, options, seed, guard, rows, logits, extra)
     models = [fit_tcn(sequences, options, seed + 1000 * (s + 1), guard, epochs, confusion)[0]
               for s in range(options.seeds)]
     ensemble = predict_tcn(models, held_out, timelines, guard, len(records))
