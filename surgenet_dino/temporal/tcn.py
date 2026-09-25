@@ -4,8 +4,9 @@ A second stage that sees in-sample emissions learns to trust them (heads reach ~
 training videos, ~76% on new ones) and then fails on new videos. Therefore every input sequence,
 in training and in epoch selection, carries emissions from a head that never saw that video.
 Nine training sequences are few: the network is small, has no BatchNorm, and is regularised by
-sequence-level augmentation and a fixed epoch budget chosen by inner folds. It is decoded by a
-plain argmax; no transition matrix or phase order is used anywhere.
+sequence-level augmentation and a fixed epoch budget chosen by inner folds. The network itself uses
+no transition matrix and no phase order; its log-probabilities are decoded afterwards under the
+order rules of the training videos (constraints.py).
 """
 
 import math

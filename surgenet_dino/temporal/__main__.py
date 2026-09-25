@@ -14,7 +14,8 @@ def parser():
                                                   "verified against the base feature cache")
     tokens.add_argument("--batch-size", type=int, help="Default: the batch size of the base extraction")
     tokens.add_argument("--num-workers", type=int, default=8)
-    cv = subs.add_parser("cv", help="Grouped cross-validation: cross-fitted heads + temporal network, argmax")
+    cv = subs.add_parser("cv", help="Grouped cross-validation: cross-fitted heads + temporal network, decoded "
+                                    "under the order rules of the training videos")
     cv.add_argument("--only-fold", type=int, help="Pilot only; does not produce complete held-out results")
     cv.add_argument("--baseline", type=Path, help="Existing out-of-fold CSV for the paired video bootstrap")
     curves = subs.add_parser("curves", help="Diagnostic learning curves (train vs held-out); selects nothing")

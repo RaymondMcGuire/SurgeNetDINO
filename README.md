@@ -1,4 +1,4 @@
-> **手术阶段识别的最终方案**：冻结的 DINO 特征，加按视频标准化、交叉拟合的线性头和一个带全局自注意力的小型离线时序网络，直接 argmax 输出。方法、无泄漏的评估协议和实测结果见 [docs/TEMPORAL_DESIGN_中文.md](docs/TEMPORAL_DESIGN_中文.md)，入口为 `scripts\temporal.bat`。
+> **手术阶段识别的最终方案**：冻结的 DINO 特征，加按视频标准化、交叉拟合的线性头和一个带全局自注意力的小型离线时序网络，再按训练视频读出的顺序规则（不可逆事件）做精确约束解码。方法、无泄漏的评估协议和实测结果见 [docs/TEMPORAL_DESIGN_中文.md](docs/TEMPORAL_DESIGN_中文.md)，入口为 `scripts\temporal.bat`。
 
 # SurgeNetDINO
 

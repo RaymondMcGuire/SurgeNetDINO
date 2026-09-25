@@ -1,7 +1,8 @@
 """Leak-free grouped cross-validation of the temporal phase network on the labeled videos.
 
-Rule used everywhere: a video is predicted by frame heads, a projection, temporal networks and an
-epoch budget that never saw that video. Scores are development estimates, not an independent test.
+Rule used everywhere: a video is predicted by frame heads, a projection, temporal networks, an
+epoch budget and order rules that never saw that video. Scores are development estimates, not an
+independent test.
 """
 
 import csv
@@ -163,7 +164,7 @@ def load_inputs(features, tokens_directory):
 
 def predict_fold(x, targets, records, timelines, fit_videos, held, head_options, options, seed, guard, inner_seed):
     """Everything is learned from fit_videos; `held` is touched only by the final prediction."""
-    from . import tcn
+    from . import constraints, tcn
     from .emissions import stacked_emissions
     inner = tcn.inner_cv(x, targets, records, timelines, fit_videos, head_options, options, seed, guard, inner_seed)
     chosen, by_epoch = tcn.common_epoch(inner, targets, fit_videos)
@@ -171,20 +172,25 @@ def predict_fold(x, targets, records, timelines, fit_videos, held, head_options,
                                        seed, guard)
     _, ensemble, per_seed, info = tcn.refit(x, targets, records, timelines, fit_videos, held, logits, head_options,
                                             options, seed, guard, chosen, inner["rows"])
+    rules = constraints.training_rules(targets, timelines, fit_videos)
+    constrained, changed = constraints.apply_rules(ensemble, timelines, held, rules)
     held_rows = torch.cat([inner["rows"][v] for v in held])
     fit_rows = torch.cat([inner["rows"][v] for v in fit_videos])
     seeds = [(per_seed[s][held_rows].argmax(1) == targets[held_rows]).double().mean().item()
              for s in range(options.seeds)]
-    return {"rows": held_rows.tolist(), "network": ensemble, "frames": logits.double().log_softmax(1),
+    return {"rows": held_rows.tolist(), "network": ensemble, "constrained": constrained,
+            "frames": logits.double().log_softmax(1),
             "selection": {"validation_videos": sorted(held), "fit_videos": sorted(fit_videos), "common_epoch": chosen,
                           "inner_accuracy_by_epoch": by_epoch, "inner_accuracy": max(by_epoch.values()),
                           "inner_groups": inner["groups"], "inner_frames": len(fit_rows),
-                          "heldout_seed_accuracy": seeds, "emission_ledger": ledger, **info}}
+                          "heldout_seed_accuracy": seeds, "emission_ledger": ledger,
+                          "order_rules": {**rules.summary(), "changed_seconds": changed}, **info}}
 
 
 def run_cv(features, tokens_directory, folds_json, options, head_options, config, resources, output, *,
            baseline=None, only_fold=None):
-    """Grouped outer folds; nothing is tuned on a held-out fold. The network is decoded by argmax."""
+    """Grouped outer folds; nothing is tuned on a held-out fold. The network's log-probabilities are
+    decoded under the order rules of each fold's training videos; the plain argmax is reported too."""
     from ..gpu import CPUControl, GPUControl
     from ..runtime import resolve_device
     from .emissions import per_video_zscore
@@ -203,7 +209,7 @@ def run_cv(features, tokens_directory, folds_json, options, head_options, config
     timelines = build_timelines(records, options.long_gap_seconds)
     device = resolve_device(config.device)
     control = GPUControl if device.type == "cuda" else CPUControl
-    network, frames, selections = {}, {}, []
+    network, constrained, frames, selections = {}, {}, {}, []
     with control(device, resources, output / "gpu.csv") as guard:
         for k, held in enumerate(groups, 1):
             if only_fold is not None and k != only_fold:
@@ -214,9 +220,11 @@ def run_cv(features, tokens_directory, folds_json, options, head_options, config
                                 config.seed, guard, inner_seed=k)
             for row in part["rows"]:
                 network[row], frames[row] = part["network"][row], part["frames"][row]
+                constrained[row] = part["constrained"][row]
             selections.append({"fold": k, **part["selection"]})
             s = part["selection"]
-            print(f"Fold {k}: common epoch {s['common_epoch']}, inner accuracy {s['inner_accuracy']:.4f}", flush=True)
+            print(f"Fold {k}: common epoch {s['common_epoch']}, inner accuracy {s['inner_accuracy']:.4f}, "
+                  f"order rules changed {s['order_rules']['changed_seconds']} seconds", flush=True)
         usage = guard.summary()
     keep = sorted(network)
     if only_fold is None and keep != list(range(len(records))):
@@ -229,8 +237,11 @@ def run_cv(features, tokens_directory, folds_json, options, head_options, config
     variants = {"frames": ("cross-fitted frame head alone, argmax (no temporal context)",
                            storable_logits(torch.stack([frames[i] for i in keep]))),
                 "network": ("temporal network, seed-averaged, argmax",
-                            storable_logits(torch.stack([network[i] for i in keep])))}
-    main = variants["network"][1]
+                            storable_logits(torch.stack([network[i] for i in keep]))),
+                "constrained": ("temporal network decoded under the order rules of the training videos",
+                                storable_logits(torch.stack([constrained[i] for i in keep])))}
+    main = variants["constrained"][1]
+    plain = variants["network"][1]
     write_fold_predictions(output / "validation_predictions.csv", main, part_targets, part_records, fold_ids)
     summary = [summary_row(name, text, logits, part_targets, part_records, part_timelines)
                for name, (text, logits) in variants.items()]
@@ -247,7 +258,9 @@ def run_cv(features, tokens_directory, folds_json, options, head_options, config
         part = classification_metrics(main[ids], part_targets[ids])
         folds.append({"fold": selection["fold"], "validation_videos": ",".join(selection["validation_videos"]),
                       "validation_samples": len(ids), "accuracy": part["accuracy"], "macro_f1": part["macro_f1"],
-                      "common_epoch": selection["common_epoch"], "inner_accuracy": selection["inner_accuracy"]})
+                      "network_accuracy": classification_metrics(plain[ids], part_targets[ids])["accuracy"],
+                      "common_epoch": selection["common_epoch"], "inner_accuracy": selection["inner_accuracy"],
+                      "changed_seconds": selection["order_rules"]["changed_seconds"]})
     write_csv(output / "fold_metrics.csv", folds)
     result = {"status": "passed", "samples": len(part_records), "complete": only_fold is None,
               "coverage_exactly_once": only_fold is None, "summary": summary, "folds": folds, "pooled": metrics,
@@ -256,9 +269,10 @@ def run_cv(features, tokens_directory, folds_json, options, head_options, config
                              "validation_videos": groups, "seed": config.seed, "resources": usage},
               "held_out_used_for_selection": False, "independent_final_test": False,
               "note": "Offline: the network reads the whole video, including future frames, and the per-video "
-                      "standardisation uses all frames of that video. The epoch budget was chosen by inner folds "
-                      "without the held-out fold, but the method itself was designed on these same 12 videos: a "
-                      "development estimate, not an unbiased test."}
+                      "standardisation uses all frames of that video. The epoch budget was chosen by inner folds and "
+                      "the order rules were read from the training videos, both without the held-out fold, but the "
+                      "method itself was designed on these same 12 videos: a development estimate, not an unbiased "
+                      "test."}
     if baseline is not None and only_fold is None:
         result["paired_comparison_vs_baseline"] = paired_video_bootstrap(
             part_records, part_targets, read_baseline(baseline, part_records), main)

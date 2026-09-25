@@ -15,7 +15,7 @@ from torch import nn
 from surgenet_dino.config import ModelConfig
 from surgenet_dino.gpu import CPUControl, Resources
 from surgenet_dino.head_options import HeadOptions
-from surgenet_dino.temporal import curves, emissions, tcn, workflows
+from surgenet_dino.temporal import constraints, curves, emissions, tcn, workflows
 from surgenet_dino.temporal import tokens as token_cache
 from surgenet_dino.temporal.options import TemporalOptions, load_options
 from surgenet_dino.temporal.timeline import build_timelines, label_track
@@ -221,8 +221,8 @@ def injected(tmp_path, monkeypatch):
 
 def test_cv_end_to_end_never_shows_held_out_videos_to_fitting_or_selection(tmp_path, monkeypatch, injected):
     records, y, features, split, config = injected
-    fitted, inner_calls = [], []
-    stack_original, inner_original = emissions.stacked_emissions, tcn.inner_cv
+    fitted, inner_calls, rule_calls = [], [], []
+    stack_original, inner_original, rules_original = emissions.stacked_emissions, tcn.inner_cv, constraints.training_rules
 
     def stack_spy(features_, targets, rows, fit_videos, apply_videos, *args):
         fitted.append((sorted(fit_videos), sorted(apply_videos)))
@@ -232,8 +232,13 @@ def test_cv_end_to_end_never_shows_held_out_videos_to_fitting_or_selection(tmp_p
         inner_calls.append(sorted(fit_videos))
         return inner_original(x, targets, rows, timelines, fit_videos, *args, **kwargs)
 
+    def rules_spy(targets, timelines, videos):
+        rule_calls.append(sorted(videos))
+        return rules_original(targets, timelines, videos)
+
     monkeypatch.setattr(emissions, "stacked_emissions", stack_spy)
     monkeypatch.setattr(tcn, "inner_cv", inner_spy)
+    monkeypatch.setattr(constraints, "training_rules", rules_spy)
     baseline = tmp_path / "baseline.csv"
     workflows.write_fold_predictions(baseline, torch.randn(len(y), CLASSES), y, records, [1] * len(y))
     result = workflows.run_cv(features, tmp_path / "tokens", split, fast(), HeadOptions(), config,
@@ -241,11 +246,14 @@ def test_cv_end_to_end_never_shows_held_out_videos_to_fitting_or_selection(tmp_p
     assert result["coverage_exactly_once"] and result["samples"] == len(records)
     assert result["held_out_used_for_selection"] is False
     rows = {r["variant"]: r for r in result["summary"]}
-    assert set(rows) == {"frames", "network"} and rows["network"]["accuracy"] > rows["frames"]["accuracy"]
+    assert set(rows) == {"frames", "network", "constrained"}
+    assert rows["network"]["accuracy"] > rows["frames"]["accuracy"]
     assert rows["network"]["mean_predicted_segments"] < rows["frames"]["mean_predicted_segments"]
+    assert result["pooled"]["accuracy"] == rows["constrained"]["accuracy"]  # the decoded labels are the output
     assert result["paired_comparison_vs_baseline"]["accuracy_delta"] > 0.2
-    for held, fit_videos in zip(GROUPS, inner_calls, strict=True):
+    for held, fit_videos, rule_videos in zip(GROUPS, inner_calls, rule_calls, strict=True):
         assert not set(fit_videos) & set(held) and len(fit_videos) == 6
+        assert rule_videos == fit_videos  # the order rules come from the training videos only
     for fit_videos, apply_videos in fitted:  # outer heads and every inner head
         assert not set(fit_videos) & set(apply_videos)
     for fold_number, held in enumerate(GROUPS, 1):
@@ -253,6 +261,7 @@ def test_cv_end_to_end_never_shows_held_out_videos_to_fitting_or_selection(tmp_p
         assert selection["validation_videos"] == held and not set(selection["fit_videos"]) & set(held)
         assert all(e["video_id"] not in e["trained_on"] for e in selection["emission_ledger"])
         assert len(selection["heldout_seed_accuracy"]) == 2 and selection["common_epoch"] in (6, 12)
+        assert selection["order_rules"]["precedence_rules"] > 0 and selection["order_rules"]["changed_seconds"] >= 0
     with (tmp_path / "cv" / "validation_predictions.csv").open(encoding="utf-8", newline="") as stream:
         written = list(csv.DictReader(stream))
     assert len(written) == len(records) and {r["fold"] for r in written} == {"1", "2", "3", "4"}
