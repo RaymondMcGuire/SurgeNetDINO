@@ -177,11 +177,12 @@ def build_inputs(timeline, logits, x, pca, extra=None):
         flags[stop:, 5] = (seconds[stop:] - stop) / 3600.0
     flags[:, 3] = seconds / max(1, total - 1)
     flags[:, 4] = seconds / 3600.0
-    parts = [emission, projected, flags]
+    parts = [emission, projected]
     if extra is not None:
         motion = torch.zeros((total, extra.shape[1]), dtype=torch.float64)
         motion[present] = extra[rows].double().clamp(-6, 6)
         parts.append(motion)
+    parts.append(flags)  # the flags stay last: augment() finds the gap flag at row -FLAGS
     return torch.cat(parts, 1).T.float().contiguous()
 
 
