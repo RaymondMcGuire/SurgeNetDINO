@@ -15,7 +15,7 @@ from torch import nn
 from surgenet_dino.config import ModelConfig
 from surgenet_dino.gpu import CPUControl, Resources
 from surgenet_dino.head_options import HeadOptions
-from surgenet_dino.temporal import constraints, curves, emissions, tcn, workflows
+from surgenet_dino.temporal import advanced, constraints, curves, emissions, tcn, workflows
 from surgenet_dino.temporal import tokens as token_cache
 from surgenet_dino.temporal.options import TemporalOptions, load_options
 from surgenet_dino.temporal.timeline import build_timelines, label_track
@@ -201,6 +201,38 @@ def test_segment_metrics_and_error_anatomy():
     assert result["share_near_boundary"] == pytest.approx(5 / 105)
 
 
+def test_advanced_score_counts_out_of_body_segments_at_30_fps(tmp_path):
+    (tmp_path / "a.csv").write_text("start-frame,phase-id\n0,x\n60,0\n135,1\n240,x\n300,1\n390,e\n")
+    truth = advanced.read_annotation(tmp_path / "a.csv")
+    assert len(truth) == 390 and truth[59] == advanced.OUT_OF_BODY and truth[134] == 0 and truth[135] == 1
+    records = [{"video_id": "a", "frame_index": f} for f in (60, 90, 120, 150, 180, 210, 300, 330, 360)]
+    right = torch.tensor([0, 0, 0, 1, 1, 1, 1, 1, 1])
+    assert advanced.advanced_counts(right, records, tmp_path) == {"a": (5, 0, 0)}  # 30 fps edges at the midpoints
+    # All 0: both x segments match; 0 [60,240) has IoU 75/180 with the true 0; the last 0 matches nothing.
+    wrong = torch.zeros(9, dtype=torch.long)
+    assert advanced.advanced_counts(wrong, records, tmp_path) == {"a": (2, 2, 3)}
+    # FAQ 2026-09-27 Q7: counts are summed over videos first, 14/19, not the mean of F1 1 and 4/9.
+    assert advanced.pooled_f1({"a": (5, 0, 0), "b": (2, 2, 3)}) == pytest.approx(14 / 19)
+
+
+def write_annotations(records, directory):
+    """Official-format CSVs of synthetic videos: x before the first frame and in every gap, 'e' at the end."""
+    directory.mkdir()
+    by_video = {}
+    for r in records:
+        by_video.setdefault(r["video_id"], []).append((r["frame_index"], r["phase_id"]))
+    for video, items in by_video.items():
+        rows, previous = [(0, "x")], None
+        for frame, phase in sorted(items):
+            if previous is not None and frame > previous + 30:
+                rows.append((previous + 30, "x"))
+            if rows[-1][1] != phase:
+                rows.append((frame, phase))
+            previous = frame
+        rows.append((previous + 30, "e"))
+        (directory / f"{video}.csv").write_text("start-frame,phase-id\n" + "".join(f"{f},{p}\n" for f, p in rows))
+
+
 @pytest.fixture
 def injected(tmp_path, monkeypatch):
     """A synthetic base cache and token cache injected in place of the files on disk."""
@@ -241,12 +273,16 @@ def test_cv_end_to_end_never_shows_held_out_videos_to_fitting_or_selection(tmp_p
     monkeypatch.setattr(constraints, "training_rules", rules_spy)
     baseline = tmp_path / "baseline.csv"
     workflows.write_fold_predictions(baseline, torch.randn(len(y), CLASSES), y, records, [1] * len(y))
+    write_annotations(records, tmp_path / "annotations")
     result = workflows.run_cv(features, tmp_path / "tokens", split, fast(), HeadOptions(), config,
-                              Resources(cpu_threads=2), tmp_path / "cv", baseline=baseline)
+                              Resources(cpu_threads=2), tmp_path / "cv", baseline=baseline,
+                              annotations=tmp_path / "annotations")
     assert result["coverage_exactly_once"] and result["samples"] == len(records)
     assert result["held_out_used_for_selection"] is False
     rows = {r["variant"]: r for r in result["summary"]}
-    assert set(rows) == {"frames", "network", "constrained"}
+    assert set(rows) == {"frames", "network", "ordered", "constrained"}
+    assert all(0 <= r["advanced_f1_at_75"] <= 1 for r in rows.values())
+    assert rows["constrained"]["advanced_f1_at_75"] > rows["frames"]["advanced_f1_at_75"]
     assert rows["network"]["accuracy"] > rows["frames"]["accuracy"]
     assert rows["network"]["mean_predicted_segments"] < rows["frames"]["mean_predicted_segments"]
     assert result["pooled"]["accuracy"] == rows["constrained"]["accuracy"]  # the decoded labels are the output
@@ -265,7 +301,8 @@ def test_cv_end_to_end_never_shows_held_out_videos_to_fitting_or_selection(tmp_p
     with (tmp_path / "cv" / "validation_predictions.csv").open(encoding="utf-8", newline="") as stream:
         written = list(csv.DictReader(stream))
     assert len(written) == len(records) and {r["fold"] for r in written} == {"1", "2", "3", "4"}
-    for name in ("summary.csv", "fold_metrics.csv", "video_metrics.csv", "segment_metrics.csv", "result.json"):
+    for name in ("summary.csv", "fold_metrics.csv", "video_metrics.csv", "segment_metrics.csv", "result.json",
+                 "network_predictions.csv"):
         assert (tmp_path / "cv" / name).is_file()
     with pytest.raises(FileExistsError):
         workflows.run_cv(features, tmp_path / "tokens", split, small(), HeadOptions(), config,

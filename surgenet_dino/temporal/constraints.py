@@ -1,14 +1,15 @@
 """Order rules learned from the training videos, and exact decoding of held-out videos under them.
 
 Some facts hold in every labeled operation: IMA treatment (3) forms a single block and phase 2 never
-follows it; no phase 0-7 appears once the rectal division scenes (81) have begun. The temporal
-network respects such facts most of the time, not always. For every fold, the rules that hold in ALL
-of its training videos are read from their label sequences, and each held-out video is decoded by an
-exact Viterbi search that maximises the summed network log-probabilities subject to those rules.
-There are no transition probabilities, durations or tunable parameters: where no rule is violated,
-the result is the plain argmax.
+follows it; no phase 0-7 appears once the rectal division scenes (81) have begun; no block of phase 9
+is shorter than several minutes. The temporal network respects such facts most of the time, not
+always. For every fold, the rules that hold in ALL of its training videos are read from their label
+sequences, and each held-out video is decoded by an exact Viterbi search that maximises the summed
+network log-probabilities subject to those rules. There are no transition probabilities or tunable
+parameters: where no rule is violated, the result is the plain argmax.
 """
 
+import itertools
 from dataclasses import dataclass
 
 import torch
@@ -16,16 +17,19 @@ import torch
 from ..training import LABELS
 
 MAX_BACK_POINTERS = 2 ** 31  # bytes: seconds x (masks of begun constrained phases) x phases
+OPENS = 14  # back-pointer code of a block that begins at the first second (no predecessor phase)
 
 
 @dataclass(frozen=True)
 class Rules:
     precedence: frozenset  # (a, b): every a precedes the first b, so a is impossible once b has begun
     single: frozenset  # phases forming one contiguous block: once left, they cannot come back
+    minimum: tuple = ()  # per phase: seconds of its shortest block in any training video; () = no minimum
 
     def summary(self):
         return {"precedence_rules": len(self.precedence),
-                "single_block_phases": [LABELS[m] for m in sorted(self.single)]}
+                "single_block_phases": [LABELS[m] for m in sorted(self.single)],
+                "minimum_block_seconds": {LABELS[m]: n for m, n in enumerate(self.minimum)}}
 
 
 def blocks(sequence):
@@ -35,7 +39,8 @@ def blocks(sequence):
 def learn_rules(sequences, classes=len(LABELS)):
     """Rules that EVERY sequence (class indices in time order, one per video) agrees with.
 
-    A rule also needs one sequence that contains its phases, so it is never vacuous.
+    A rule also needs one sequence that contains its phases, so it is never vacuous; a phase absent from
+    every sequence keeps a minimum block length of 1.
     """
     spans = [({c: s.index(c) for c in set(s)}, {c: len(s) - 1 - s[::-1].index(c) for c in set(s)})
              for s in sequences]
@@ -44,7 +49,9 @@ def learn_rules(sequences, classes=len(LABELS)):
                   and all(a not in last or b not in first or last[a] < first[b] for first, last in spans)}
     single = {m for m in range(classes) if any(m in s for s in sequences)
               and all(blocks(s).count(m) <= 1 for s in sequences)}
-    return Rules(frozenset(precedence), frozenset(single))
+    runs = [(c, len(list(g))) for s in sequences for c, g in itertools.groupby(s)]
+    minimum = tuple(min((n for c, n in runs if c == m), default=1) for m in range(classes))
+    return Rules(frozenset(precedence), frozenset(single), minimum)
 
 
 def training_rules(targets, timelines, videos):
@@ -55,13 +62,19 @@ def training_rules(targets, timelines, videos):
 def decode(scores, rules):
     """Labels [T] that maximise the summed log-probabilities scores [T,K] and obey every rule.
 
-    Exact Viterbi over (current phase, set of constrained phases already begun). Back-pointers are one
-    byte: the previous phase in the low four bits, bit 4 set when the current phase has just begun.
+    Exact Viterbi over (current phase, set of constrained phases already begun). A block of phase q is
+    entered for its first minimum[q] seconds at once, from the state of the second before them, so
+    every block (the last one included) lasts at least minimum[q] seconds. Back-pointers are one byte:
+    the previous phase in the low four bits (OPENS for the first block), bit 4 set when the current
+    phase has just begun.
     """
     steps, classes = scores.shape
+    length = list(rules.minimum) or [1] * classes
     tracked = sorted({b for _, b in rules.precedence} | set(rules.single))
-    if classes > 16 or steps * classes * (1 << len(tracked)) > MAX_BACK_POINTERS:
+    if classes > OPENS or steps * classes * (1 << len(tracked)) > MAX_BACK_POINTERS:
         raise ValueError("Too many phases or constrained phases for the decoder state")
+    if len(length) != classes or min(length) < 1:
+        raise ValueError("Minimum block lengths must be positive, one per phase")
     bit = [0] * classes
     for i, phase in enumerate(tracked):
         bit[phase] = 1 << i
@@ -71,16 +84,23 @@ def decode(scores, rules):
     masks = torch.arange(1 << len(tracked))
     allowed = (masks[:, None] & forbid[None, :]) == 0  # a begun phase forbids nothing in this mask
     scores = scores.double()
+    total = torch.cat([scores.new_zeros(1, classes), scores.cumsum(0)])  # total[t] = sum of scores[:t]
     value = torch.full((len(masks), classes), float("-inf"), dtype=torch.float64)
-    for q in range(classes):
-        if allowed[bit[q], q]:
-            value[bit[q], q] = scores[0, q]
     back = torch.zeros((steps, len(masks), classes), dtype=torch.uint8)
     stay = torch.arange(classes, dtype=torch.uint8).expand(len(masks), classes)
-    for t in range(1, steps):
-        top, arg = value.topk(2, dim=1)
+    history = {}  # second -> top-2 phases of every mask at that second; only the last max(length) kept
+    for t in range(steps):
         new, code = value + scores[t], stay.clone()
         for q in range(classes):
+            start = t + 1 - length[q]  # first second of a block of q entered now
+            if start < 0:
+                continue
+            gain = total[t + 1, q] - total[start, q]
+            if start == 0:  # the first block of the video
+                if allowed[bit[q], q] and gain > new[bit[q], q]:
+                    new[bit[q], q], code[bit[q], q] = gain, OPENS | (16 if bit[q] else 0)
+                continue
+            top, arg = history[start - 1]
             other = arg[:, 0] == q  # the best predecessor must be a different phase
             best, best_arg = torch.where(other, top[:, 1], top[:, 0]), torch.where(other, arg[:, 1], arg[:, 0])
             source, begun = masks, torch.zeros(len(masks), dtype=torch.bool)
@@ -93,21 +113,32 @@ def decode(scores, rules):
                     again = begun & (best > candidate)
                     candidate, source = torch.where(again, best, candidate), torch.where(again, masks, source)
                     begun = begun & ~again
-            entered = torch.where(allowed[:, q], candidate + scores[t, q], float("-inf"))
+            entered = torch.where(allowed[:, q], candidate + gain, float("-inf"))
             take = entered > new[:, q]
             new[:, q] = torch.where(take, entered, new[:, q])
             code[:, q] = torch.where(take, (best_arg[source] | begun.long() << 4).to(torch.uint8), code[:, q])
         value, back[t] = new, code
+        history[t] = value.topk(2, dim=1)
+        history.pop(t - max(length), None)
     if not torch.isfinite(value.max()):
         raise ValueError("No label sequence satisfies the rules")
     mask, phase = divmod(int(value.argmax()), classes)
-    path = [phase]
-    for t in range(steps - 1, 0, -1):
+    path, t = [], steps - 1
+    while True:
         step = int(back[t, mask, phase])
+        if step == phase:  # the block continues
+            path.append(phase)
+            t -= 1
+            continue
+        path += [phase] * length[phase]  # the block was entered minimum[phase] seconds ago
+        t -= length[phase]
         if step >> 4:
             mask ^= bit[phase]
+        if step & 15 == OPENS:
+            break
         phase = step & 15
-        path.append(phase)
+    if t != -1:
+        raise RuntimeError("Decoder back-trace did not end at the first second")
     return torch.tensor(path[::-1])
 
 

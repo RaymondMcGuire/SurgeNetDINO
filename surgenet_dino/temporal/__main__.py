@@ -19,7 +19,12 @@ def parser():
     cv.add_argument("--only-fold", type=int, help="Pilot only; does not produce complete held-out results")
     cv.add_argument("--baseline", type=Path, help="Existing out-of-fold CSV for the paired video bootstrap")
     cv.add_argument("--motion", type=Path, help="Per-frame motion CSV from tools/motion_features.py, "
-                                                "appended to the temporal network's input")
+                                                "appended to the temporal network's input. It is decoded from "
+                                                "the 30 fps videos: Advanced only, the organisers' FAQ Q5(d) "
+                                                "forbids the video files in Basic")
+    cv.add_argument("--annotations", type=Path, help="Directory of the official annotation CSVs (<video>.csv); "
+                                                     "adds the Advanced score (F1@0.75 at 30 fps, x a class, "
+                                                     "TP/FP/FN summed over videos)")
     curves = subs.add_parser("curves", help="Diagnostic learning curves (train vs held-out); selects nothing")
     curves.add_argument("--head-epochs", type=int, default=12, help="Epochs plotted for the frame head")
     curves.add_argument("--every", type=int, default=2, help="Evaluate the temporal network every N epochs")
@@ -72,8 +77,10 @@ def main(argv=None):
         if args.command == "cv":
             from .workflows import run_cv
             result = run_cv(args.features, args.tokens, args.folds_json, options, head_options, config, resources,
-                            args.output_dir, baseline=args.baseline, only_fold=args.only_fold, motion=args.motion)
-            keep = ("variant", "accuracy", "macro_f1", "min_video_accuracy", "mean_predicted_segments")
+                            args.output_dir, baseline=args.baseline, only_fold=args.only_fold, motion=args.motion,
+                            annotations=args.annotations)
+            keep = ("variant", "accuracy", "macro_f1", "min_video_accuracy", "mean_predicted_segments",
+                    *(("advanced_f1_at_75",) if args.annotations else ()))
             summary = {"summary": [{k: row[k] for k in keep} for row in result["summary"]],
                        "folds": [{k: f[k] for k in ("fold", "accuracy", "common_epoch")} for f in result["folds"]]}
             if "paired_comparison_vs_baseline" in result:

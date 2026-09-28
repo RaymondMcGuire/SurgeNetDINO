@@ -16,6 +16,8 @@ def obeys(sequence, rules):
     for a, b in rules.precedence:
         if b in sequence and a in sequence[sequence.index(b):]:
             return False
+    if any(len(list(g)) < rules.minimum[c] for c, g in itertools.groupby(sequence) if rules.minimum):
+        return False
     return all(blocks(sequence).count(m) <= 1 for m in rules.single)
 
 
@@ -25,7 +27,33 @@ def test_rules_hold_in_every_sequence_and_are_never_vacuous():
     assert rules.precedence == {(0, 1), (0, 2), (0, 3), (1, 3), (2, 3)}  # no rule mentions the absent 4
     assert rules.single == {0, 2, 3}
     assert all(obeys(s, rules) for s in sequences)
-    assert rules.summary() == {"precedence_rules": 5, "single_block_phases": ["0", "2", "3"]}
+    assert rules.summary() == {"precedence_rules": 5, "single_block_phases": ["0", "2", "3"],
+                               "minimum_block_seconds": {"0": 1, "1": 1, "2": 1, "3": 1, "4": 1}}
+
+
+def test_minimum_block_length_is_the_shortest_block_of_any_training_sequence():
+    rules = learn_rules([[0, 0, 0, 1, 1, 2, 2, 2], [0, 0, 1, 1, 1, 2, 2, 0, 0]], classes=4)
+    assert rules.minimum == (2, 2, 2, 1)  # every block counts, also a phase coming back; absent 3 is free
+
+
+def test_decoding_is_exact_under_minimum_block_lengths():
+    rules = Rules(frozenset({(1, 2)}), frozenset({2}), minimum=(1, 3, 2, 1))
+    generator = torch.Generator().manual_seed(4)
+    for _ in range(5):
+        scores = torch.randn(7, 4, generator=generator, dtype=torch.float64)
+        best = max((s for s in itertools.product(range(4), repeat=7) if obeys(list(s), rules)),
+                   key=lambda s: scores[range(7), list(s)].sum().item())
+        found = decode(scores, rules)
+        assert obeys(found.tolist(), rules)
+        torch.testing.assert_close(scores[range(7), found].sum(), scores[range(7), list(best)].sum())
+    blip = torch.tensor([0] * 5 + [1] + [0] * 6)  # a 1 s block of 1 where every block lasts >= 3 s
+    scores = (torch.nn.functional.one_hot(blip, 4) * 2.0).log_softmax(1)
+    assert decode(scores, Rules(frozenset(), frozenset())).tolist() == blip.tolist()
+    assert decode(scores, Rules(frozenset(), frozenset(), (1, 3, 1, 1))).tolist() == [0] * 12  # cheaper than growing
+    short = torch.tensor([0] * 5 + [1] * 2 + [0] * 5)
+    scores = (torch.nn.functional.one_hot(short, 4) * 2.0).log_softmax(1)
+    found = decode(scores, Rules(frozenset(), frozenset(), (1, 3, 1, 1))).tolist()
+    assert found.count(1) == 3 and found[5:7] == [1, 1]  # a 2 s block grows by one second, cheaper than deletion
 
 
 def test_decoding_is_the_plain_argmax_when_no_rule_is_broken():

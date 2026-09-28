@@ -2,7 +2,8 @@
 
 Label-free like the tokens: frame-difference and optical-flow magnitudes around each catalogued
 frame, log-compressed here and standardised per video by the caller. They never enter the frame
-heads or the PCA, so the emissions stay identical to a run without them.
+heads or the PCA, so the emissions stay identical to a run without them. They are decoded from the
+30 fps videos, which the organisers' FAQ Q5(d) forbids in Basic: Advanced only.
 """
 
 import csv

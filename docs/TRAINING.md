@@ -133,15 +133,16 @@ crossval.sh FEATURES_PT NEW_RUN_DIR NEW_SPLIT_DIR [PROFILE] [PROFILES_JSON] [cpu
 ## 离线时序网络与顺序规则约束解码（最终方案，2026-09-22，约束解码 2026-09-25）
 
 单帧方案停在 75% 到 77% 的原因是单帧信息上限，不是读出头的结构。`surgenet_dino/temporal/` 在冻结的 DINO 之上加入时间信息，不改主干。
-网络输出最后按每折训练视频读出的顺序规则做精确约束解码（`constraints.py`）：例如阶段 3 只有一段且之后不再出现 2，81 开始后不再出现 0 到 7。没有转移概率、时长或可调参数。
+网络输出最后按每折训练视频读出的规则做精确约束解码（`constraints.py`）：顺序规则，例如阶段 3 只有一段且之后不再出现 2，81 开始后不再出现 0 到 7；以及最短块长（2026-09-27 加入），每个阶段的每一段都不短于训练视频里它最短的一段。没有转移概率、时长分布或可调参数。
+给 `cv` 加 `--annotations <官方 annotation_csv 目录>` 时，另外按 Advanced 官方口径评分：30 fps 帧上的段级 F1@0.75，x（体外，视频中涂黑）作为一个类并按精确检测处理；按组委会 FAQ（2026-09-27）Q7，x 段计入，所有视频的 TP/FP/FN 合并后算一个 F1，不是逐视频平均。
 方法、无泄漏的评估协议、已知局限和做过但未采用的方案见 [TEMPORAL_DESIGN_中文.md](TEMPORAL_DESIGN_中文.md)。范围只限 12 个有标注视频的训练加验证。
 
 ```powershell
 # 1. 从同一个冻结编码器提取 [最后一层 CLS | patch 均值] 特征（约 20 分钟，与原缓存校验通过才写入）
 .\scripts\temporal.bat cache-tokens --features <features.pt> --output-dir <特征目录>
-# 2. 四折交叉验证（约 40 分钟，单卡）
-.\scripts\temporal.bat cv --features <features.pt> --tokens <特征目录> --baseline <基线 csv> --output-dir <新目录>
-# 2b. 可选：逐秒运动特征（独立 OpenCV 环境从 30 fps 原视频算，CPU 约 30 分钟），作为时序网络的附加输入
+# 2. 四折交叉验证（约 45 分钟，单卡）；--annotations 可选，加上后给出 Advanced 官方口径分数
+.\scripts\temporal.bat cv --features <features.pt> --tokens <特征目录> --annotations <annotation_csv 目录> --baseline <基线 csv> --output-dir <新目录>
+# 2b. 可选，只限 Advanced（FAQ Q5(d)：Basic 不得使用原视频）：逐秒运动特征（独立 OpenCV 环境从 30 fps 原视频算，CPU 约 30 分钟），作为时序网络的附加输入
 uv run --isolated --no-project --python 3.12 --with opencv-python-headless==5.0.0.93 python tools\motion_features.py extract --catalogue <labeled_1fps_v1\samples.csv> --source "<原视频根目录>" --output <motion 目录> --workers 6
 .\scripts\temporal.bat cv --features <features.pt> --tokens <特征目录> --motion <motion 目录>\motion.csv --baseline <基线 csv> --output-dir <新目录>
 # 3. 学习曲线诊断与出图（只画曲线，不做任何选择）
@@ -161,9 +162,13 @@ uv run --isolated --no-project --with matplotlib==3.11.2 python scripts\plot_tem
 
 四折合并：逐帧分类头 76.97%，网络直接 argmax 88.83%，约束解码 **89.17%**（macro-F1 85.25%，最差视频 82.0%，每视频约 18 段，真实 16.8 段，段级 F1@0.75 从 0.528 升到 0.564）。相对已提交基线 76.69% 的配对提升为 +12.5 个点（+9.7 到 +15.4）。约束解码在三份独立的网络输出上分别提高 0.30、0.31、0.34 个点。
 学习曲线显示验证集准确率约 20 轮后进入平台、到 120 轮没有下降，训练轮数由训练视频内层交叉验证选定，不需要再加 early stop。
+
+加入最短块长后的当前最终方案，`advanced_cv_01`（种子 42，同一份网络输出上对比）：帧准确率网络直接 argmax 88.97%、只用顺序规则 89.32%、再加最短块长 **89.38%**；Advanced 官方口径 F1@0.75（所有视频合并计数）网络直接 argmax 0.690、最终 **0.729**（逐视频平均依次为 0.687、0.706、0.725）。各折 90.44 / 89.77 / 89.07 / 88.23%。仓库原有的 `f1_at_75` 跳过体外段，不等于官方口径。细节见 [TEMPORAL_DESIGN_中文.md](TEMPORAL_DESIGN_中文.md) 4.4 与第六节第六轮。
 <!-- TEMPORAL_RESULTS:END -->
 
 可选的运动特征（`--motion`，2026-09-25）：`tools/motion_features.py` 对每个已编目的帧取原视频前后各 15 帧，算帧差和 DIS 光流的 16 个幅值统计，log1p 后按视频标准化，只拼进时序网络的输入，分类头和 PCA 不变。按种子配对：种子 42 为 89.17% → 89.41%（+0.24），种子 43 为 89.51% → 90.03%（+0.52）；两种子均值 89.34% → 89.72%。基线换种子本身相差 0.34，所以这是约 +0.4 ± 0.3 的小而一致的提升：工程 8（81/82/83）相关错误减少约 15%，阶段 0/1/2/7/9 有一致的新增错误。细节见 [TEMPORAL_DESIGN_中文.md](TEMPORAL_DESIGN_中文.md) 4.3。
+**2026-09-27 更正：** 以上数字是在增广 bug 下测得的（运动特征接在标志位后面，训练时逐帧概率几乎全被清零）。修复后种子 42 配对重测：最终 89.38% → 89.43%，Advanced F1 0.725 → 0.720（合并计数 0.729 → 0.724），运动特征只是很小、不确定的输入。
+**2026-09-28：** 运动特征要解码原视频，组委会 FAQ Q5(d) 规定 Basic 不得使用评价视频文件本身，所以它只能用于 Advanced；Basic 的最终方案不带 `--motion`。
 
 预测是离线的：输入是同一个视频全部帧的序列，标准化用整段视频的统计量，时序网络会读取未来帧，不能对孤立的单张图片预测。
 这些仍是同样 12 个视频上的开发估计：嵌套保护了训练轮数的选择和顺序规则的读取，但不保护方法本身的设计。

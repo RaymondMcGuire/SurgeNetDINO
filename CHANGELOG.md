@@ -1,3 +1,20 @@
+## 2026-09-28：对照组委会 FAQ（2026-09-27）
+
+- Advanced 分数的汇总改为官方口径（FAQ Q7）：x 段计入，所有视频的 TP、FP、FN 先合并再算一个 F1，不再是逐视频 F1 的平均。`workflows.segment_counts` 返回 (TP, FP, FN)，`advanced.advanced_counts` / `pooled_f1` 取代 `advanced_scores`；`summary.csv` 的 `advanced_f1_at_75` 是合并值，`segment_metrics.csv` 仍给逐视频 F1。单元测试检查合并值 14/19 不等于平均值。
+- 用保存的逐帧输出重算（不重跑训练）：`advanced_cv_01` 网络 0.687 → 0.690，最终 0.725 → **0.729**；其它运行高 0.000 到 0.007，先后不变。
+- `cv --motion` 的帮助与文档注明只限 Advanced：运动特征要解码 30 fps 原视频，FAQ Q5(d) 禁止 Basic 使用评价视频文件本身。Basic 的最终方案不带 `--motion`，其余输入属于 Q5 (b)(c)。
+- 核对新的 `submission_format/basic_challenge/submission.csv`：视频 02、07、11、15 共 24,507 行，表头 `filename,phase-id`，帧号都是 30 的倍数（四个视频都是 30.0 fps），每个视频恰有一段不少于 300 秒的空洞。顺序解码四个视频对照：列出的帧都是正常画面，未列出的 1 fps 帧全部是黑帧（最大像素不超过 7），即模板正好是非 x 帧。
+
+## 2026-09-27：最短块长规则与 Advanced 官方口径评分
+
+- `constraints.py`：每折除顺序规则外，再从训练视频的标签序列读出每个阶段的最短块长（按有图片的秒计），解码时每一段都不能更短。仍是同一个精确 Viterbi：进入阶段时一次走完它的最短块长（累积和），不增加状态；最短块长全为 1 时与原解码逐秒相同。太短的块会被补长或删掉，取总代价小的一种，所以标签对、只是偏短的块不会被删。
+- 新增 `surgenet_dino/temporal/advanced.py` 与 `cv --annotations <annotation_csv 目录>`：按 Advanced 官方口径评分，30 fps 帧、x 作为一个类（x 帧在视频中涂黑，按精确检测处理），其余帧取最近的 1 fps 预测。`summary.csv` 多一列 `advanced_f1_at_75`，`segment_metrics.csv` 给出逐视频分数。仓库原有的 `f1_at_75` 跳过体外段（`81 | x | 81` 算一段），不等于官方口径。
+- `cv` 的 `summary.csv` 增加"只用顺序规则"一行（`ordered`），`fold_metrics.csv` 增加 `ordered_accuracy`；新写出 `network_predictions.csv`（网络直接输出），以后的解码实验不必重跑网络。主输出仍是 `validation_predictions.csv`。
+- `advanced_cv_01`（种子 42）：帧准确率网络 88.97%、只用顺序规则 89.32%、再加最短块长 **89.38%**；Advanced F1@0.75 依次 0.687、0.706、**0.725**（当天按逐视频平均；次日按 FAQ Q7 改为合并计数，最终为 0.729，见上一条）。
+- 同期实测或判断的一份外部建议（CORAL 式全协方差白化无效、贪心合并短块降低帧准确率、训练视频数学习曲线等）见 [TEMPORAL_DESIGN_中文.md](docs/TEMPORAL_DESIGN_中文.md) 第六节第六轮；这些对比脚本不进仓库。
+- 测试：最短块长的穷举精确性对照、Advanced 评分的单元测试，端到端测试覆盖 `--annotations`。
+- 修复 `cv --motion` 的增广 bug（2026-09-25 引入）：运动特征接在标志位之后，`augment()` 却按"标志位在最后"取"这一秒没有图片"的标志，结果训练时几乎所有秒的逐帧概率被清零（保留 0%，不加运动时 92%）。现在运动特征放在标志位之前；不加运动时输入不变。`tests/test_temporal_motion.py` 新增两个在旧代码上失败的回归测试。修复后重测（种子 42）：最终 89.43%，基线 89.38%，Advanced F1 0.720 对 0.725；此前记录的运动特征 +0.4 ± 0.3 作废。
+
 ## 2026-09-25：可选的逐秒运动特征输入
 
 - 新增 `tools/motion_features.py`：在与抽帧相同的独立 OpenCV 环境里顺序解码 30 fps 原视频，对每个已编目的帧取前后各 15 帧，写出 16 个帧差与 DIS 光流的幅值统计（含镜头整体运动与局部残差运动），每帧一行 CSV；带合成视频的 `self-test`。不读标签，训练环境不加依赖。

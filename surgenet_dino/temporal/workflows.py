@@ -7,7 +7,7 @@ independent test.
 
 import csv
 import statistics
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import torch
@@ -33,7 +33,15 @@ def edit_score(predicted, truth):
 
 
 def segmental_f1(predicted, truth, threshold):
-    """Lea et al. segmental F1@threshold: a true segment can be matched once, by the same label."""
+    return f1_score(*segment_counts(predicted, truth, threshold))
+
+
+def f1_score(tp, fp, fn):
+    return 2 * tp / max(1, 2 * tp + fp + fn)
+
+
+def segment_counts(predicted, truth, threshold):
+    """(TP, FP, FN) of Lea et al. segmental F1@threshold: a true segment can be matched once, by the same label."""
     hit, tp = [False] * len(truth), 0
     for label, start, stop in predicted:
         best, index = 0.0, -1
@@ -45,8 +53,7 @@ def segmental_f1(predicted, truth, threshold):
                 best, index = iou, i
         if index >= 0 and best >= threshold and not hit[index]:
             hit[index], tp = True, tp + 1
-    fp, fn = len(predicted) - tp, len(truth) - sum(hit)
-    return 2 * tp / max(1, 2 * tp + fp + fn)
+    return tp, len(predicted) - tp, len(truth) - sum(hit)
 
 
 def segment_metrics(predicted, targets, timelines):
@@ -109,17 +116,21 @@ def write_fold_predictions(path, logits, targets, records, fold_ids):
     temporary.unlink()
 
 
-def summary_row(name, description, logits, targets, records, timelines):
+def summary_row(name, description, logits, targets, records, timelines, annotations=None):
     metrics = classification_metrics(logits, targets, records)
     predicted = logits.argmax(1)
     parts = segment_metrics(predicted, targets, timelines)
     mean = lambda key: statistics.mean(r[key] for r in parts)  # noqa: E731
-    return {"variant": name, "description": description, "accuracy": metrics["accuracy"],
-            "macro_f1": metrics["macro_f1"], "video_mean_accuracy": metrics["video_mean_accuracy"],
-            "min_video_accuracy": min(m["accuracy"] for m in metrics["per_video"].values()),
-            "mean_true_segments": mean("true_segments"), "mean_predicted_segments": mean("predicted_segments"),
-            "edit": mean("edit"), "f1_at_25": mean("f1_at_25"), "f1_at_50": mean("f1_at_50"),
-            "f1_at_75": mean("f1_at_75"), **error_anatomy(predicted, targets, timelines)}
+    row = {"variant": name, "description": description, "accuracy": metrics["accuracy"],
+           "macro_f1": metrics["macro_f1"], "video_mean_accuracy": metrics["video_mean_accuracy"],
+           "min_video_accuracy": min(m["accuracy"] for m in metrics["per_video"].values()),
+           "mean_true_segments": mean("true_segments"), "mean_predicted_segments": mean("predicted_segments"),
+           "edit": mean("edit"), "f1_at_25": mean("f1_at_25"), "f1_at_50": mean("f1_at_50"),
+           "f1_at_75": mean("f1_at_75"), **error_anatomy(predicted, targets, timelines)}
+    if annotations is not None:
+        from .advanced import advanced_counts, pooled_f1
+        row["advanced_f1_at_75"] = pooled_f1(advanced_counts(predicted, records, annotations))
+    return row
 
 
 def read_baseline(path, records):
@@ -176,11 +187,12 @@ def predict_fold(x, targets, records, timelines, fit_videos, held, head_options,
                                             options, seed, guard, chosen, inner["rows"], extra)
     rules = constraints.training_rules(targets, timelines, fit_videos)
     constrained, changed = constraints.apply_rules(ensemble, timelines, held, rules)
+    ordered, _ = constraints.apply_rules(ensemble, timelines, held, replace(rules, minimum=()))
     held_rows = torch.cat([inner["rows"][v] for v in held])
     fit_rows = torch.cat([inner["rows"][v] for v in fit_videos])
     seeds = [(per_seed[s][held_rows].argmax(1) == targets[held_rows]).double().mean().item()
              for s in range(options.seeds)]
-    return {"rows": held_rows.tolist(), "network": ensemble, "constrained": constrained,
+    return {"rows": held_rows.tolist(), "network": ensemble, "ordered": ordered, "constrained": constrained,
             "frames": logits.double().log_softmax(1),
             "selection": {"validation_videos": sorted(held), "fit_videos": sorted(fit_videos), "common_epoch": chosen,
                           "inner_accuracy_by_epoch": by_epoch, "inner_accuracy": max(by_epoch.values()),
@@ -190,10 +202,12 @@ def predict_fold(x, targets, records, timelines, fit_videos, held, head_options,
 
 
 def run_cv(features, tokens_directory, folds_json, options, head_options, config, resources, output, *,
-           baseline=None, only_fold=None, motion=None):
+           baseline=None, only_fold=None, motion=None, annotations=None):
     """Grouped outer folds; nothing is tuned on a held-out fold. The network's log-probabilities are
-    decoded under the order rules of each fold's training videos; the plain argmax is reported too.
-    `motion`: optional per-frame motion CSV (tools/motion_features.py), an extra network input only."""
+    decoded under the rules of each fold's training videos (order and minimum block length); the plain
+    argmax and the order rules alone are reported too.
+    `motion`: optional per-frame motion CSV (tools/motion_features.py), an extra network input only.
+    `annotations`: optional directory of the official annotation CSVs, for the Advanced score (advanced.py)."""
     from ..gpu import CPUControl, GPUControl
     from ..runtime import resolve_device
     from .emissions import per_video_zscore
@@ -217,7 +231,7 @@ def run_cv(features, tokens_directory, folds_json, options, head_options, config
     timelines = build_timelines(records, options.long_gap_seconds)
     device = resolve_device(config.device)
     control = GPUControl if device.type == "cuda" else CPUControl
-    network, constrained, frames, selections = {}, {}, {}, []
+    network, ordered, constrained, frames, selections = {}, {}, {}, {}, []
     with control(device, resources, output / "gpu.csv") as guard:
         for k, held in enumerate(groups, 1):
             if only_fold is not None and k != only_fold:
@@ -228,7 +242,7 @@ def run_cv(features, tokens_directory, folds_json, options, head_options, config
                                 config.seed, guard, inner_seed=k, extra=extra)
             for row in part["rows"]:
                 network[row], frames[row] = part["network"][row], part["frames"][row]
-                constrained[row] = part["constrained"][row]
+                ordered[row], constrained[row] = part["ordered"][row], part["constrained"][row]
             selections.append({"fold": k, **part["selection"]})
             s = part["selection"]
             print(f"Fold {k}: common epoch {s['common_epoch']}, inner accuracy {s['inner_accuracy']:.4f}, "
@@ -246,12 +260,15 @@ def run_cv(features, tokens_directory, folds_json, options, head_options, config
                            storable_logits(torch.stack([frames[i] for i in keep]))),
                 "network": ("temporal network, seed-averaged, argmax",
                             storable_logits(torch.stack([network[i] for i in keep]))),
-                "constrained": ("temporal network decoded under the order rules of the training videos",
-                                storable_logits(torch.stack([constrained[i] for i in keep])))}
+                "ordered": ("temporal network decoded under the order rules of the training videos only",
+                            storable_logits(torch.stack([ordered[i] for i in keep]))),
+                "constrained": ("temporal network decoded under the order rules and minimum block lengths "
+                                "of the training videos", storable_logits(torch.stack([constrained[i] for i in keep])))}
     main = variants["constrained"][1]
     plain = variants["network"][1]
     write_fold_predictions(output / "validation_predictions.csv", main, part_targets, part_records, fold_ids)
-    summary = [summary_row(name, text, logits, part_targets, part_records, part_timelines)
+    write_fold_predictions(output / "network_predictions.csv", plain, part_targets, part_records, fold_ids)
+    summary = [summary_row(name, text, logits, part_targets, part_records, part_timelines, annotations)
                for name, (text, logits) in variants.items()]
     write_csv(output / "summary.csv", summary)
     metrics = classification_metrics(main, part_targets, part_records)
@@ -259,7 +276,13 @@ def run_cv(features, tokens_directory, folds_json, options, head_options, config
     write_csv(output / "video_metrics.csv", [
         {"video_id": v, "accuracy": m["accuracy"], "macro_f1_present": m["macro_f1_present"],
          "samples": sum(c["support"] for c in m["per_class"])} for v, m in metrics["per_video"].items()])
-    write_csv(output / "segment_metrics.csv", segment_metrics(main.argmax(1), part_targets, part_timelines))
+    parts = segment_metrics(main.argmax(1), part_targets, part_timelines)
+    if annotations is not None:
+        from .advanced import advanced_counts
+        counts = advanced_counts(main.argmax(1), part_records, annotations)
+        parts = [{**r, "advanced_f1_at_75": f1_score(*counts[r["video_id"]])} for r in parts]
+        provenance["annotations"] = str(Path(annotations).resolve())
+    write_csv(output / "segment_metrics.csv", parts)
     folds = []
     for selection in selections:
         ids = [i for i, f in enumerate(fold_ids) if f == selection["fold"]]
@@ -267,6 +290,8 @@ def run_cv(features, tokens_directory, folds_json, options, head_options, config
         folds.append({"fold": selection["fold"], "validation_videos": ",".join(selection["validation_videos"]),
                       "validation_samples": len(ids), "accuracy": part["accuracy"], "macro_f1": part["macro_f1"],
                       "network_accuracy": classification_metrics(plain[ids], part_targets[ids])["accuracy"],
+                      "ordered_accuracy": classification_metrics(variants["ordered"][1][ids],
+                                                                 part_targets[ids])["accuracy"],
                       "common_epoch": selection["common_epoch"], "inner_accuracy": selection["inner_accuracy"],
                       "changed_seconds": selection["order_rules"]["changed_seconds"]})
     write_csv(output / "fold_metrics.csv", folds)
@@ -278,9 +303,10 @@ def run_cv(features, tokens_directory, folds_json, options, head_options, config
               "held_out_used_for_selection": False, "independent_final_test": False,
               "note": "Offline: the network reads the whole video, including future frames, and the per-video "
                       "standardisation uses all frames of that video. The epoch budget was chosen by inner folds and "
-                      "the order rules were read from the training videos, both without the held-out fold, but the "
-                      "method itself was designed on these same 12 videos: a development estimate, not an unbiased "
-                      "test."}
+                      "the order rules and minimum block lengths were read from the training videos, all without "
+                      "the held-out fold, but the method itself was designed on these same 12 videos: a development "
+                      "estimate, not an unbiased test. The Advanced score takes phase x as exactly detected (its "
+                      "frames are black)."}
     if baseline is not None and only_fold is None:
         result["paired_comparison_vs_baseline"] = paired_video_bootstrap(
             part_records, part_targets, read_baseline(baseline, part_records), main)

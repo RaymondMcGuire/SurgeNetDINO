@@ -100,9 +100,9 @@ python prepare_labeled.py split --dataset "H:\dataset\JSCAS_preprocessed\labeled
 
 换划分时使用新的输出目录，保留旧目录，记录新的种子与规则。不要在模型训练中隐式重新随机划分。
 
-### 逐秒运动特征（`motion_v1`，可选）
+### 逐秒运动特征（`motion_v1`，可选，只限 Advanced）
 
-时序网络的可选输入，同样在独立 OpenCV 环境里生成，训练环境不变。只读清单里的 `video_id` 和 `frame_index`，不读标签；对每个已编目的帧 f 顺序解码原视频的 [f−15, f+15) 共 30 帧，写出 16 个非负的帧差和 DIS 光流统计量，每帧一行（`motion.csv`），参数与各视频信息记录在 `motion.json`。输出目录必须尚不存在。
+时序网络的可选输入，同样在独立 OpenCV 环境里生成，训练环境不变。它要解码 30 fps 原视频，组委会 FAQ（2026-09-27）Q5(d) 规定 Basic 推理时不得使用评价视频文件本身，所以只能用于 Advanced。只读清单里的 `video_id` 和 `frame_index`，不读标签；对每个已编目的帧 f 顺序解码原视频的 [f−15, f+15) 共 30 帧，写出 16 个非负的帧差和 DIS 光流统计量，每帧一行（`motion.csv`），参数与各视频信息记录在 `motion.json`。输出目录必须尚不存在。
 
 ```powershell
 uv run --isolated --no-project --python 3.12 --with opencv-python-headless==5.0.0.93 python tools\motion_features.py extract --catalogue "H:\dataset\JSCAS_preprocessed\labeled_1fps_v1\samples.csv" --source "H:\dataset\JSCAS AI Challenge" --output "H:\dataset\JSCAS_preprocessed\motion_v1" --workers 6
