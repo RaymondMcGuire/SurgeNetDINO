@@ -13,6 +13,7 @@ import time
 from collections import Counter, defaultdict
 from pathlib import Path
 
+from surgenet_dino.experiments import write_csv
 from surgenet_dino.temporal.advanced import OUT_OF_BODY, frame_predictions, read_annotation
 from surgenet_dino.temporal.timeline import segments
 from surgenet_dino.temporal.workflows import f1_score, segment_counts
@@ -109,13 +110,6 @@ def paired_bootstrap(baseline, candidate, repetitions, seed):
                                           pooled([r for r in baseline if r["fold"] == f]) for f in folds},
             "videos_improved": sum(other[v]["advanced_f1_perfect_x"] > base[v]["advanced_f1_perfect_x"] for v in videos),
             "videos_worse": sum(other[v]["advanced_f1_perfect_x"] < base[v]["advanced_f1_perfect_x"] for v in videos)}
-
-
-def write_csv(path, rows):
-    with path.open("x", encoding="utf-8", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
-        writer.writeheader()
-        writer.writerows(rows)
 
 
 def self_check():

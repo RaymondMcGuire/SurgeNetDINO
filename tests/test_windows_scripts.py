@@ -30,7 +30,7 @@ def test_batch_launchers_pause_and_preserve_status(tmp_path, name):
             input=b"\n", capture_output=True, timeout=10,
         )
         expected = 0
-        if case == "invalid_backend" or (case == "missing_lock" and name != "init"):
+        if case in {"invalid_backend", "missing_lock"}:
             expected = 1
         if case == "missing_uv" and name in {"init", "check"}:
             expected = 1

@@ -71,7 +71,7 @@ Windows，在项目根目录运行：
 .\scripts\pretrained.bat cu128 dinov2_vitb
 ```
 
-`init` 安装 Python、同步依赖并检查环境；已有 `uv.lock` 时使用现有锁，缺失时才联网生成。
+`init` 使用仓库已提交的 `uv.lock` 安装 Python、同步依赖并检查环境；缺失时会报错，需先恢复该文件。
 修改依赖后显式运行 `uv lock` 并审查差异，不创建空锁文件。安装 uv 见[官方说明](https://docs.astral.sh/uv/getting-started/installation/)。
 `check` 检查依赖导入、Ruff 和测试；要求 CUDA 执行时另外使用 `doctor --require-cuda`（CUDA 版 init 已包含）。
 

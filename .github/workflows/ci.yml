@@ -17,15 +17,7 @@ jobs:
         with:
           version: "0.10.0"
           python-version: "3.12"
-      - name: Use committed lock, or resolve first bootstrap lock
-        shell: bash
-        run: |
-          if test -f uv.lock; then
-            uv lock --check
-          else
-            echo "::warning::No committed uv.lock. Bootstrap only; download and commit the generated lock."
-            uv lock
-          fi
+      - run: uv lock --check
       - run: uv sync --locked --extra cpu --group dev
       - run: uv run --locked --extra cpu python -m surgenet_dino doctor
       - run: uv run --locked --extra cpu ruff check surgenet_dino scripts tests examples tools load_models.py

@@ -24,13 +24,12 @@ if /i "%BACKEND%"=="cu128" (
     echo ERROR: backend must be cu128 or cpu.
     exit /b 1
 )
+if not exist uv.lock (
+    echo ERROR: restore the committed uv.lock before initialization.
+    exit /b 1
+)
 uv python install 3.12
 if errorlevel 1 exit /b 1
-if not exist uv.lock (
-    echo Creating the first real uv.lock. Commit it after this command succeeds.
-    uv lock
-    if errorlevel 1 exit /b 1
-)
 uv sync --locked --extra "%BACKEND%" --group dev
 if errorlevel 1 exit /b 1
 if /i "%BACKEND%"=="cu128" (

@@ -26,7 +26,7 @@ SurgeNetDINO 的模型加载、冻结图像特征和手术阶段分类工程，�
 训练启动只检查清单和缓存元数据，不再逐张核验原图。需要完整数据审计时，单独运行 `scripts\validate_data.bat`；默认检查已预处理数据目录并保存报告，详见训练说明。
 当前只保留一个训练方案，旧 compare、多配方、实验采样、归一化与显式 L2 入口已移除。
 
-[训练及交叉验证说明](docs/TRAINING.md) · [数据与划分](docs/DATASET.md) · [基础架构](docs/PROJECT_GUIDE.md) · [时序解码设计](docs/TEMPORAL_DESIGN_中文.md)
+[训练及交叉验证说明](docs/TRAINING.md) · [数据与划分](docs/DATASET.md) · [基础架构](docs/PROJECT_GUIDE.md) · [时序解码设计](docs/TEMPORAL_DESIGN_中文.md) · [方法学习指南](docs/METHOD_GUIDE_中文.md)
 
 交叉验证中每折验证数据用于早停和模型选择，结果属于开发阶段验证，不能称作独立最终测试。
 原始图片、缓存、模型和历史结果图保存在 H 盘。早期对比实验结果保留，清理代码不删除实验数据。

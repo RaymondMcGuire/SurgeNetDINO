@@ -11,5 +11,5 @@ checkpoints/
 *.pth
 *.pt
 *.safetensors
-# Commit the REAL lock after first successful initialization.
+# Keep the committed dependency lock.
 !uv.lock
