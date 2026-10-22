@@ -18,6 +18,11 @@ SurgeNetDINO 的模型加载、冻结图像特征和手术阶段分类工程，�
 .\scripts\crossval.bat
 ```
 
+Basic 正式预测可双击 `scripts\basic_challenge.bat`：检查现有 CUDA 环境，按官方模板从
+02/07/11/15 抽取 1 fps 图片，提取特征，再加载已训练模型生成
+`outputs/basic_challenge/<时间戳>/predictions/submission.csv`。每次使用新目录；原视频和模板不变。
+模板、数据路径和运行说明见 [Basic 提交准备](docs/CHALLENGE_SUBMISSION_20261004_中文.md)。
+
 - train：检查原 9/3 划分，提取冻结特征后训练。
 - retrain_head：复用已有特征，训练同一组合方案。
 - crossval：复用全部 12 个已标注视频的特征，依次进行四折（每折 9 训练、3 验证），汇总并绘图。

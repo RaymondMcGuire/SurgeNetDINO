@@ -27,6 +27,7 @@ class FrameImages(torch.utils.data.Dataset):
         return len(self.paths)
 
     def __getitem__(self, index):
+        # DataLoader 取数据时才调用此方法；创建 Dataset 不会读取或预处理图片。
         from ..runtime import preprocess_image
         return preprocess_image(self.paths[index], self.size)
 
@@ -41,6 +42,7 @@ def check_architecture(model):
 @torch.inference_mode()
 def frame_tokens(model, images):
     """[B, 2D]: the final CLS token, then the mean of the final (normalised) patch tokens."""
+    # 进入 timm：patch embedding → CLS/位置编码 → Transformer → 最终归一化。
     tokens = model.forward_features(images)
     return torch.cat([tokens[:, 0], tokens[:, 1:].mean(1)], 1)
 
@@ -54,9 +56,10 @@ def extract(model, records, base_rows, image_size, guard, batch, workers, tolera
     check_architecture(model)
     dimension = base_rows.shape[1]
     tokens = torch.empty((len(records), 2 * dimension), dtype=torch.float32)
-    loader = torch.utils.data.DataLoader(FrameImages([r["image_path"] for r in records], image_size),
-                                         batch_size=batch, shuffle=False, num_workers=workers)
+    dataset = FrameImages([r["image_path"] for r in records], image_size)
+    loader = torch.utils.data.DataLoader(dataset, batch_size=batch, shuffle=False, num_workers=workers)
     start, worst, equal = 0, 0.0, 0
+    # 迭代时自动预处理并堆叠为 [B, 3, H, W]；保留清单顺序以逐行核对旧 CLS 缓存。
     for step, images in enumerate(loader):
         with guard.batch(len(images)):
             part = frame_tokens(model, images.to(guard.device)).float().cpu()
@@ -79,6 +82,11 @@ def extract(model, records, base_rows, image_size, guard, batch, workers, tolera
 
 
 def cache_tokens(base_features, config, resources, output, *, batch_size=None, workers=8, tolerance=1e-5):
+    """读取旧缓存 → 准备冻结模型 → extract 读取图片并提取特征 → 校验 → 保存。
+
+    features.pt 来自先前的 cache-features；重新读取图片提取 CLS + patch 均值，
+    以旧 CLS 逐行校验编码器、预处理和图片顺序，保证新旧特征属于同一批数据。
+    """
     from ..gpu import CPUControl, GPUControl
     from ..registry import get_spec
     from ..runtime import resolve_device

@@ -7,7 +7,6 @@ The evaluation image cache is deliberately separate from all training caches.
 import argparse
 import csv
 import json
-import re
 import zipfile
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -25,6 +24,7 @@ from .boundary import snap_boundaries
 from .emissions import fit_head_fixed, head_logits, per_video_zscore, stacked_emissions
 from .options import TemporalOptions, load_options
 from .timeline import build_timelines, segments
+from .template import read_template
 from .tokens import FrameImages, check_architecture, frame_tokens
 from .workflows import load_inputs
 
@@ -32,20 +32,6 @@ TRAINING_VIDEOS = {'01', '03', '04', '05', '06', '08', '09', '10', '12', '13', '
 EVALUATION_VIDEOS = {'02', '07', '11', '15'}
 FORMAT = 'surgenet-temporal-final-v1'
 IMAGE_FORMAT = 'surgenet-temporal-unlabeled-v1'
-
-
-def read_template(path):
-    with Path(path).open(encoding='utf-8-sig', newline='') as stream:
-        reader = csv.DictReader(stream)
-        if reader.fieldnames != ['filename', 'phase-id']:
-            raise ValueError('Expected the official filename,phase-id template')
-        rows = list(reader)
-    names = [r['filename'] for r in rows]
-    if not names or len(set(names)) != len(names):
-        raise ValueError('Empty template or duplicate filename')
-    if any(not re.fullmatch(r'\d{2}_\d{6}', n) or int(n.split('_')[1]) % 30 for n in names):
-        raise ValueError('Template names must identify whole 1 fps seconds')
-    return names
 
 
 def final_epoch(report, records, options, head_options, provenance, seed):
@@ -163,8 +149,8 @@ def cache_images(args, config, resources):
         assert_identity(identity, checkpoint['feature_identity'], 'Evaluation encoder')
         check_architecture(model)
         before = state_digest(model)
-        loader = torch.utils.data.DataLoader(FrameImages([r['image_path'] for r in records],
-                                                      get_spec(config.name).image_size),
+        dataset = FrameImages([r['image_path'] for r in records], get_spec(config.name).image_size)
+        loader = torch.utils.data.DataLoader(dataset,
                                             batch_size=args.batch_size, shuffle=False, num_workers=0)
         parts = []
         for batch in loader:
@@ -257,6 +243,11 @@ def write_advanced(records, predicted, masks, path):
 
 
 def main(argv=None):
+    """最终训练/提交入口；评价图像提取走 main → cache_images → FrameImages / frame_tokens。
+
+    cache-images 与训练侧共用图片预处理及视觉编码，但仅按评价模板读取图片，
+    不要求训练侧 features.pt，也不使用评价标签；predict 直接读取已保存的 images.pt。
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
     fit = sub.add_parser('fit-final')

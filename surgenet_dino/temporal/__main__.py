@@ -1,4 +1,11 @@
-"""CLI: python -m surgenet_dino.temporal --help. The original CLIs remain unchanged."""
+"""CLI: python -m surgenet_dino.temporal --help.
+
+cache-tokens 的执行顺序：main → tokens.cache_tokens → tokens.extract。
+先读取已有的 features.pt（图片清单、CLS 特征及编码器身份），再创建并冻结视觉模型。
+extract 中由 DataLoader 调用 FrameImages.__getitem__ → runtime.preprocess_image，
+再将预处理后的图片批次交给 frame_tokens → timm.forward_features；校验后保存 tokens.pt。
+cv / curves 则读取已有特征缓存，进行时序训练或学习曲线诊断，不重新读取图片。
+"""
 
 import argparse
 import json

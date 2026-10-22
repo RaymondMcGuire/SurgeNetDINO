@@ -6,6 +6,34 @@
 
 ## 当前准备状态
 
+### 2026-10-22：Basic 双击入口
+
+双击 `scripts\basic_challenge.bat`，顺序执行：环境检查 → 模板指定帧抽取 → 冻结特征提取 →
+加载最终模型推理 → 按模板原序生成完整 `submission.csv`。脚本不重训、不发送提交。
+默认源目录为 `H:\dataset\JSCAS AI Challenge`，模板位于其下
+`jscas_ai_challenge_2026_data1\jscas_ai_challenge_2026_data1\submission_format\basic_challenge\submission.csv`。
+最终模型使用 `outputs/challenge_final_20261004/checkpoint.pt`；结果位于
+`outputs/basic_challenge/<时间戳>/predictions/submission.csv`，窗口会打印具体路径和退出码。
+仅保存模板列出的 24,507 张原尺寸 PNG，不读取标注，也不计算更密帧的特征；需预留图片存储空间。
+抽帧复用本机已有 `.cache/uv/archive-v0/SruTPdM1WCWkIu0S/Scripts/python.exe` 的 OpenCV，
+模型使用 `.venv/Scripts/python.exe`；缺少环境或文件会报错停止，不自动安装依赖。
+GPU 沿用 low 档、温度上限 70°C、CPU 2 线程。已有目录不覆盖；失败后保留产物便于排查。
+也可运行 `scripts\basic_challenge.bat "源目录" "新结果目录"` 指定路径。
+此入口已做合成抽帧及启动流程检查；尚未执行真实四视频预测。
+
+### 迁移到 Linux
+
+Git 保存代码、配置、依赖锁、测试和文档，不包含 `.venv`、`.cache`、`outputs` 或 H 盘数据。
+需另外复制最终模型 `outputs/challenge_final_20261004/checkpoint.pt`、DINO 权重缓存
+`.cache/huggingface`，以及四个评价视频和官方模板；仅克隆仓库不会恢复这些文件。
+Windows 虚拟环境不能复用，在 Linux 用 `bash scripts/init.sh cu128` 重建模型环境；
+OpenCV 仍需单独准备。`basic_challenge.bat` 是 Windows 入口，Linux 可依次运行相同的
+`python -m tools.basic_extract`、`python -m surgenet_dino.temporal.submission cache-images` 和
+`python -m surgenet_dino.temporal.submission predict`，将 H 盘路径替换为 Linux 实际路径。
+已有 `features.pt` 内的训练图片绝对路径也需单独处理；仅做最终模型推理无需重用训练缓存。
+
+以下保留 2026-10-04 的准备记录：
+
 现有 H 盘档案和仓库没有找到这版时序算法的正式 `submission.csv` / `submission.zip`。官方 Basic `submission.csv` 是 24,507 行的空白模板，不能当成已完成预测。评价视频为 02、07、11、15；它们尚未形成预处理图片和时序特征缓存。
 
 新增 [submission.py](../surgenet_dino/temporal/submission.py) 复用现有标准化、交叉拟合头、PCA、时序网络和精确约束解码，提供三个入口：
