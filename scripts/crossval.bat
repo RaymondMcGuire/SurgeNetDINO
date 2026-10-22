@@ -33,14 +33,17 @@ for %%I in ("%RUN_DIR%") do set "RUN_NAME=%%~nxI"
 set "SPLIT_DIR=%~4"
 if "%SPLIT_DIR%"=="" set "SPLIT_DIR=H:\dataset\JSCAS_experiments\splits\%RUN_NAME%"
 set "PROFILES=%~5"
-if "%PROFILES%"=="" set "PROFILES=H:\dataset\JSCAS_experiments\phase1_video01\20260920_phase1\calibration\profiles.json"
 if not exist "%FEATURES%" exit /b 1
+set "PROFILE_ARGS="
+if not defined PROFILES goto profiles_ready
 if not exist "%PROFILES%" exit /b 1
+set PROFILE_ARGS=--profiles "%PROFILES%"
+:profiles_ready
 if exist "%RUN_DIR%" exit /b 1
 if exist "%SPLIT_DIR%" exit /b 1
 echo [1/2] Validate cached sources once, then train four video-disjoint folds.
 echo Output: "%RUN_DIR%"
-uv run --locked --extra cu128 python -m surgenet_dino crossval-head --features "%FEATURES%" --output-dir "%RUN_DIR%" --split-output-dir "%SPLIT_DIR%" --folds 4 --gpu-profile "%PROFILE%" --profiles "%PROFILES%"
+uv run --locked --extra cu128 python -m surgenet_dino crossval-head --features "%FEATURES%" --output-dir "%RUN_DIR%" --split-output-dir "%SPLIT_DIR%" --folds 4 --gpu-profile "%PROFILE%" %PROFILE_ARGS%
 if errorlevel 1 exit /b %errorlevel%
 echo [2/2] Plot completed cross-validation results in an isolated plotting environment.
 uv run --isolated --no-project --with matplotlib==3.11.2 python -m scripts.plot_crossval "%RUN_DIR%"

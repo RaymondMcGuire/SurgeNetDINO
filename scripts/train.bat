@@ -30,16 +30,19 @@ set "RUN_DIR=H:\dataset\JSCAS_experiments\frozen_dinov2\%RUN_ID%"
 :run_dir_ok
 set "SPLIT_JSON=H:\dataset\JSCAS_experiments\splits\video_holdout_9_3_v1\split.json"
 if not "%~3"=="" set "SPLIT_JSON=%~3"
-set "PROFILES_JSON=H:\dataset\JSCAS_experiments\phase1_video01\20260920_phase1\calibration\profiles.json"
-if not "%~4"=="" set "PROFILES_JSON=%~4"
 if not exist "%SPLIT_JSON%" (
     echo ERROR: Split file not found: "%SPLIT_JSON%"
     exit /b 1
 )
+set "PROFILE_ARGS="
+set "PROFILES_JSON=%~4"
+if not defined PROFILES_JSON goto profiles_ready
 if not exist "%PROFILES_JSON%" (
     echo ERROR: Calibration file not found: "%PROFILES_JSON%"
     exit /b 1
 )
+set PROFILE_ARGS=--profiles "%PROFILES_JSON%"
+:profiles_ready
 if exist "%RUN_DIR%" (
     echo ERROR: Output directory exists. Choose a new run directory.
     exit /b 1
@@ -47,8 +50,8 @@ if exist "%RUN_DIR%" (
 echo GPU profile: %PROFILE%
 echo Output: "%RUN_DIR%"
 echo [1/2] Validate the split and cache frozen features for training and validation.
-uv run --locked --extra cu128 python -m surgenet_dino cache-features --split "%SPLIT_JSON%" --output-dir "%RUN_DIR%\cache" --gpu-profile "%PROFILE%" --profiles "%PROFILES_JSON%"
+uv run --locked --extra cu128 python -m surgenet_dino cache-features --split "%SPLIT_JSON%" --output-dir "%RUN_DIR%\cache" --gpu-profile "%PROFILE%" %PROFILE_ARGS%
 if errorlevel 1 exit /b %errorlevel%
 echo [2/2] Train a regularized linear head with sub-epoch validation and early stopping.
-uv run --locked --extra cu128 python -m surgenet_dino train-head --features "%RUN_DIR%\cache\features.pt" --output-dir "%RUN_DIR%\train" --gpu-profile "%PROFILE%" --profiles "%PROFILES_JSON%"
+uv run --locked --extra cu128 python -m surgenet_dino train-head --features "%RUN_DIR%\cache\features.pt" --output-dir "%RUN_DIR%\train" --gpu-profile "%PROFILE%" %PROFILE_ARGS%
 exit /b %errorlevel%

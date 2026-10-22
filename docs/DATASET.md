@@ -13,8 +13,8 @@
 | 本次固定划分 | `H:\dataset\JSCAS_experiments\splits\video_holdout_9_3_v1` | 9 个训练视频、3 个验证视频的独立清单 |
 | 之后的训练产物 | `H:\dataset\JSCAS_experiments\<experiment>\<run_id>` | 模型、指标、曲线、实际参数，以及引用的划分身份 |
 
-视频 01 复用已完成的原目录，本批重新检查其全部图片和清单，不覆盖该案例。
-其余视频沿用相同目录结构。官方无公开标签的视频 02、07、11、15 不参加本批处理或划分。
+2026-09-20 的历史批次复用了视频 01 的原图；现在仓库中的重建脚本从原视频处理全部 12 个案例，
+不再要求预先准备视频 01。官方无公开标签的视频 02、07、11、15 不参加本批处理或划分。
 
 ## 固定的预处理规则
 
@@ -75,30 +75,66 @@
 
 ## 复现
 
-预处理脚本保存在数据索引目录 `prepare_labeled.py`，官方脚本副本为 `extract_frames.py`。
-脚本使用独立 uv 环境，不向 SurgeNetDINO 的训练环境加入 OpenCV/pandas：
+换电脑只带原始数据也可以重新准备；入口是仓库内的 `scripts/prepare_data.bat` / `prepare_data.sh`，
+核心代码为 [tools/prepare_labeled.py](../tools/prepare_labeled.py)。先安装 uv；Python 3.12 和
+固定版本的 OpenCV/pandas/Pillow 由 uv 自动准备在独立环境，不加入训练环境。预处理不需要 GPU，
+预处理盘至少留 120 GiB 空间（历史 PNG 合计约 77 GiB，另需保留原始视频）。首次准备依赖需要联网。
+
+Windows 默认原始数据路径为 `H:\dataset\JSCAS AI Challenge`，双击 `scripts\prepare_data.bat` 即可。
+它递归寻找根目录下面各处 `HD_videos/*.mp4`，按视频编号匹配唯一的 `annotation_csv`，
+并调用该标注目录旁的官方 `extract_frames.py`。保留各数据包的解压结构即可，**不用将视频集中到 data1**。
+缺视频、重复编号或多个标注目录都会报错；原始视频、标注、官方脚本不作修改。
+
+默认输出是原始数据根目录的同级目录：`JSCAS_preprocessed` 和 `JSCAS_experiments`。
+也可指定三个路径（第二、三个参数可省略）：
 
 ```powershell
-uv run --isolated --no-project --python 3.12 --with opencv-python-headless==5.0.0.93 --with pandas==3.0.6 --with pillow==12.3.0 python prepare_labeled.py self-test
+.\scripts\prepare_data.bat "H:\dataset\JSCAS AI Challenge" "H:\dataset\JSCAS_preprocessed_new" "H:\dataset\JSCAS_experiments_new"
 ```
 
-本次抽帧执行的参数为：
+Linux 在项目根目录运行：
 
-```powershell
-python prepare_labeled.py extract --source "H:\dataset\JSCAS AI Challenge" --output "H:\dataset\JSCAS_preprocessed\labeled_1fps_v1" --workers 2
+```bash
+bash scripts/prepare_data.sh "/data/JSCAS AI Challenge"
+# 自定义输出根目录：
+# bash scripts/prepare_data.sh "/data/JSCAS AI Challenge" "/data/preprocessed_new" "/data/experiments_new"
 ```
 
-上面的 `python` 需使用同一独立依赖环境。输出目录和新视频案例目录必须尚不存在；脚本拒绝覆盖，
-也不会自动删除失败产物。若要完整重建，应使用新的预处理父目录，并先放入已核验的 video01_1fps 案例，
-或另外保留视频 01 的原始复现流程。
+一次执行顺序为：发现 12 个有标注视频 → 官方 1 fps 抽帧 → 全量 PNG/标签/黑帧检查及抽样像素比对
+→ 保存 `labeled_1fps_v1/dataset.json`、`samples.csv`、逐视频报告和预览 → 生成独立 9/3 划分
+`JSCAS_experiments/splits/video_holdout_9_3_v1/split.json`。默认两个 CPU 工作进程，不会启动模型训练。
 
-数据报告通过后，生成独立划分：
+所有输出索引、视频案例目录和划分目录必须尚不存在；失败产物会保留，拒绝覆盖和自动删除。
+在当前已有旧数据的电脑试重建时，请像上面的示例一样换用新的输出根目录。
+换系统/盘符后应重新运行预处理以生成当前机器的绝对路径，不直接拿 Windows 的旧清单在 Linux 上训练。
 
-```powershell
-python prepare_labeled.py split --dataset "H:\dataset\JSCAS_preprocessed\labeled_1fps_v1" --output "H:\dataset\JSCAS_experiments\splits\video_holdout_9_3_v1" --seed 42
-```
+只做规则自检可运行 `uv run --no-project --python 3.12 --script tools/prepare_labeled.py self-test`。
+已有合格数据只想另建划分时，同一入口使用 `split --dataset <labeled_1fps_v1> --output <新划分目录> --seed 42`；
+不重新抽帧，也不在训练中隐式重新随机划分。
 
-换划分时使用新的输出目录，保留旧目录，记录新的种子与规则。不要在模型训练中隐式重新随机划分。
+### 准备好后如何训练
+
+1. 建立训练环境：Windows 运行 `scripts\init.bat cu128`；Linux 运行 `bash scripts/init.sh cu128`。
+2. 准备冻结 DINO 权重：可以连同旧项目的 `.cache/huggingface` 一起复制。若只有原始数据，
+   在项目根目录运行下面的命令下载并校验同一版本；训练配置仍固定版本及 SHA-256，并离线读取它：
+
+   ```text
+   uv run --locked --extra cu128 python -m surgenet_dino smoke --config configs/dinov2_vitb.toml --revision 9b2c75b7d469850b750a715b90cb91d6319f7e30 --sha256 cd6e73e692074f1d58d2e4125998818121acc61748ff941849784616b03c2def --device cuda:0
+   ```
+
+3. 按新生成的划分提取特征和训练单帧分类头。Windows 默认 H 盘布局用 `scripts\train.bat low`；
+   自定义路径用 `scripts\train.bat low "<新的运行目录>" "<split.json>"`。
+   Linux 用 `bash scripts/train.sh "/data/JSCAS_experiments/splits/video_holdout_9_3_v1/split.json" "/data/JSCAS_experiments/frozen_dinov2/new_run"`。
+   新电脑可先用默认 low 限制；历史 GPU 校准文件不是必需项，若提供则仍会严格校验硬件和模型身份。
+
+这一步得到 `<新的运行目录>/cache/features.pt` 和单帧分类结果。若要继续复现我们讨论的时序网络，
+把这个**新缓存**传入 `scripts\temporal.bat cache-tokens --features <features.pt> --output-dir <新token目录>`，
+然后 `scripts\temporal.bat cv --features <features.pt> --tokens <新token目录> --output-dir <新验证目录>`。
+Linux 将入口替换为 `bash scripts/temporal.sh`。Advanced 官方口径评分再加 `--annotations <annotation_csv>`；
+Basic 不加 `--motion`。完整训练/验证选项见 [TRAINING.md](TRAINING.md)。
+
+`JSCAS_experiments` 内的旧缓存和历史结果并非废文件：复制它们能保留旧实验；没有它们也能从原始数据重建。
+`retrain_head.bat` / `crossval.bat` 默认仍指向历史缓存，新电脑需显式传入刚生成的 `features.pt`。
 
 ### 逐秒运动特征（`motion_v1`，可选，只限 Advanced）
 

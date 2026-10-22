@@ -29,7 +29,10 @@ train.bat 参数依次为 PROFILE、NEW_RUN_DIR、SPLIT_JSON、PROFILES_JSON。
 retrain_head.bat 参数为 FEATURES_PT、PROFILE、NEW_RUN_DIR。
 crossval.bat 参数为 FEATURES_PT、PROFILE、NEW_RUN_DIR、NEW_SPLIT_DIR、PROFILES_JSON；均可省略。
 默认特征为 `H:\dataset\JSCAS_experiments\frozen_dinov2\20260920_122914_522\cache\features.pt`。
-默认 low，支持 medium/high；GPU 校准文件仍复用历史 phase1_video01 目录的 profiles.json。
+默认 low，支持 medium/high；GPU 校准文件可显式提供，不再依赖历史 phase1_video01 目录。
+未提供时使用默认资源限制和保守的特征提取 batch；提供时仍严格检查校准记录与当前硬件、模型身份。
+新电脑先按 [数据准备与迁移](DATASET.md#复现) 生成清单、准备固定版本的模型权重，
+然后运行 train；retrain_head/crossval 需显式传入新生成的 features.pt，默认历史缓存路径不会自动重建。
 显存预算和批间休息不是精确利用率目标；75°C、遥测异常、非有限数值、显存不足会停止计算。
 
 四折新实验默认保存到 `H:\dataset\JSCAS_experiments\frozen_dinov2\crossval_regularized_<时间戳>`，

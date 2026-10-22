@@ -10,6 +10,11 @@ SurgeNetDINO 的模型加载、冻结图像特征和手术阶段分类工程，�
 
 ## Windows 入口
 
+新电脑只有原始数据时，先双击 `scripts\prepare_data.bat`（默认 `H:\dataset\JSCAS AI Challenge`）。
+它递归处理分散在各数据包的 12 个有标注视频，完成抽帧、检查和训练/验证清单，不需要预先准备视频 01。
+Linux 用 `bash scripts/prepare_data.sh "/data/JSCAS AI Challenge"`。
+安装 uv、输出路径、空间要求及训练权重准备见 [数据准备与迁移](docs/DATASET.md#复现)。
+
 ```powershell
 .\scripts\init.bat cu128
 .\scripts\check.bat cu128

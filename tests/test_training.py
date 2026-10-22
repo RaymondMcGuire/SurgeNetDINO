@@ -265,7 +265,8 @@ def test_phase_cli_defaults_and_invalid_settings(tmp_path, capsys):
 
 
 @pytest.mark.skipif(__import__("os").name != "nt", reason="cmd.exe")
-def test_train_launcher_stops_and_pauses(tmp_path):
+@pytest.mark.parametrize("with_profiles", [False, True])
+def test_train_launcher_stops_and_pauses(tmp_path, with_profiles):
     import re
     import subprocess
 
@@ -276,15 +277,18 @@ def test_train_launcher_stops_and_pauses(tmp_path):
     (tmp_path / "split.json").write_text("{}")
     (tmp_path / "profiles.json").write_text("{}")
     for code in (0, 7):
-        stub = re.sub(r"(?m)^uv [^\n]+", f"echo TRAIN_COMMAND\ncmd /d /c exit {code}", source)
+        stub = re.sub(r"(?m)^uv [^\n]+", f"echo TRAIN_COMMAND %PROFILE_ARGS%\ncmd /d /c exit {code}", source)
         stub = stub.replace("where uv >nul 2>&1", "cmd /d /c exit 0")
         target = scripts / "train.bat"
         target.write_text(stub)
-        result = subprocess.run(["cmd", "/d", "/c", str(target), "low", str(tmp_path / f"run{code}"),
-                                 str(tmp_path / "split.json"), str(tmp_path / "profiles.json")],
+        args = ["low", str(tmp_path / f"run{code}"), str(tmp_path / "split.json")]
+        if with_profiles:
+            args.append(str(tmp_path / "profiles.json"))
+        result = subprocess.run(["cmd", "/d", "/c", str(target), *args],
                                 input=b"\n", capture_output=True, timeout=10)
         assert result.returncode == code, result.stdout + result.stderr
         assert result.stdout.count(b"TRAIN_COMMAND") == (2 if code == 0 else 1)
+        assert (b"--profiles" in result.stdout) == with_profiles
         marker = f"Script finished with exit code {code} (0 = success).".encode()
         assert result.stdout.count(marker) == 1
         assert result.stdout.split(marker)[1].strip()

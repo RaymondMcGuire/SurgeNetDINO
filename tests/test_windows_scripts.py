@@ -45,7 +45,8 @@ def test_batch_launchers_pause_and_preserve_status(tmp_path, name):
 
 @pytest.mark.skipif(os.name != "nt", reason="requires Windows cmd.exe")
 @pytest.mark.parametrize("name", ["retrain_head", "crossval"])
-def test_cached_head_batch_launchers(tmp_path, name):
+@pytest.mark.parametrize("with_profiles", [False, True])
+def test_cached_head_batch_launchers(tmp_path, name, with_profiles):
     source = (Path(__file__).resolve().parents[1] / "scripts" / f"{name}.bat").read_text()
     directory = tmp_path / "scripts"
     directory.mkdir()
@@ -53,17 +54,49 @@ def test_cached_head_batch_launchers(tmp_path, name):
     (tmp_path / "features.pt").write_text("stub only")
     (tmp_path / "profiles.json").write_text("stub")
     for code in (0, 7):
-        stub = re.sub(r"(?m)^uv [^\n]+", f"echo HEAD_COMMAND\ncmd /d /c exit {code}", source)
+        stub = re.sub(r"(?m)^uv [^\n]+", f"echo HEAD_COMMAND %PROFILE_ARGS%\ncmd /d /c exit {code}", source)
         stub = stub.replace("where uv >nul 2>&1", "cmd /d /c exit 0")
         script = directory / f"{name}.bat"
         script.write_text(stub)
-        result = subprocess.run(["cmd", "/d", "/c", str(script), str(tmp_path / "features.pt"),
-                                 "low", str(tmp_path / f"run{code}"), str(tmp_path / f"splits{code}"),
-                                 str(tmp_path / "profiles.json")],
+        args = [str(tmp_path / "features.pt"), "low", str(tmp_path / f"run{code}"),
+                str(tmp_path / f"splits{code}")]
+        if with_profiles:
+            args.append(str(tmp_path / "profiles.json"))
+        result = subprocess.run(["cmd", "/d", "/c", str(script), *args],
                                 input=b"\n", capture_output=True, timeout=10)
         assert result.returncode == code, result.stdout + result.stderr
         assert result.stdout.count(b"HEAD_COMMAND") == (2 if name == "crossval" and code == 0 else 1)
+        if name == "crossval":
+            assert (b"--profiles" in result.stdout) == with_profiles
         assert f"Script finished with exit code {code} (0 = success).".encode() in result.stdout
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows cmd.exe")
+@pytest.mark.parametrize("case", ["default", "explicit", "error", "missing_uv"])
+def test_prepare_data_batch_launcher(tmp_path, case):
+    source = (Path(__file__).resolve().parents[1] / 'scripts/prepare_data.bat').read_text()
+    scripts = tmp_path / 'scripts'
+    scripts.mkdir()
+    target = scripts / 'prepare_data.bat'
+    code = 7 if case == 'error' else 0
+    stub = re.sub(r'(?m)^uv ([^\n]+)', rf'echo PREPARE \1\ncmd /d /c exit {code}', source)
+    stub = stub.replace('where uv >nul 2>&1', f'cmd /d /c exit {1 if case == "missing_uv" else 0}')
+    target.write_text(stub)
+    args = [] if case == 'default' else [str(tmp_path / 'raw data'), str(tmp_path / 'new data'),
+                                       str(tmp_path / 'new experiments')]
+    result = subprocess.run(['cmd', '/d', '/c', str(target), *args], input=b'\n',
+                            capture_output=True, timeout=10)
+    expected = 1 if case == 'missing_uv' else code
+    assert result.returncode == expected, result.stdout + result.stderr
+    assert f'Script finished with exit code {expected} (0 = success).'.encode() in result.stdout
+    assert (b'PREPARE' in result.stdout) == (case != 'missing_uv')
+    if case != 'missing_uv':
+        assert b'--no-project --python 3.12 --script tools\\prepare_labeled.py prepare' in result.stdout
+        source_root = r'H:\dataset\JSCAS AI Challenge' if not args else args[0]
+        assert f'--source "{source_root}"'.encode() in result.stdout
+        if args:
+            assert f'--output "{args[1]}\\labeled_1fps_v1"'.encode() in result.stdout
+            assert f'--split-output "{args[2]}\\splits\\video_holdout_9_3_v1"'.encode() in result.stdout
 
 
 @pytest.mark.skipif(os.name != "nt", reason="requires Windows cmd.exe")
